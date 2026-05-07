@@ -1,0 +1,19 @@
+defaults:
+  - algorithm: erl
+  - _self_
+
+seed: 42
+device: auto
+debug: true
+
+env:
+  id: Pendulum-v1
+eval_env:
+  id: Pendulum-v1
+
+wandb:
+  enabled: false
+  project: evo_rl
+  entity: evo_rl
+  name: null
+  tags: []
