@@ -4,7 +4,7 @@ import numpy as np
 from enum import Enum
 
 from common.reply_buffer import Buffer
-from common.utils import surrogate_fitness, evaluate_policy
+from common.utils import surrogate_fitness, evaluate_policy, rollout_policy
 from common.mc_dropout import MCDropout
 
 
@@ -87,7 +87,7 @@ class SurrogateController:
         self,
         population: list[nn.Module],
         env,
-        evaluate_episodes: int = 3,
+        evaluate_episodes: int = 5,
         mutation_std: float = 0.05,
         mutation_prob: float = 0.1,
         elite_ratio: float = 0.2,
@@ -199,7 +199,7 @@ class SurrogateController:
         total_steps = 0
 
         for individual in population:
-            fitness, steps = evaluate_policy(
+            fitness, steps = rollout_policy(
                 policy=individual,
                 env=env,
                 device=self.device,

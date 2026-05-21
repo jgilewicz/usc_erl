@@ -151,7 +151,7 @@ def SC_ERL(
             surrogate_controller.generation_based_control(
                 population=population,
                 env=env,
-                evaluate_episodes=1,
+                evaluate_episodes=5,
                 mutation_std=mutation_std,
                 mutation_prob=mutation_prob,
                 elite_ratio=elite_ratio,
@@ -163,16 +163,14 @@ def SC_ERL(
         for fitness in fitnesses:
             recent_rewards.append(fitness)
 
-        rl_reward, rl_steps = evaluate_policy(
+        rl_reward = evaluate_policy(
             policy=actor,
             env=env,
             device=device,
-            episodes=1,
-            replay_buffer=replay_buffer,
+            episodes=5,
             noise_std=exploration_noise_std,
         )
 
-        total_steps += rl_steps
         recent_rewards.append(rl_reward)
 
         critic_loss = 0.0
@@ -204,7 +202,7 @@ def SC_ERL(
             # Once every few generations, inject the weakest actor into the population
             if generation % rl_injection_interval == 0:
                 eval_fitnesses = [
-                    evaluate_policy(ind, eval_env, device=device, episodes=1)[0]
+                    evaluate_policy(ind, eval_env, device=device, episodes=5)
                     for ind in population
                 ]
 

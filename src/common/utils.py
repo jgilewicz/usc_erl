@@ -199,12 +199,11 @@ def warmup(env: gym.Env, replay_buffer: Buffer, warmup_steps: int) -> int:
 
     return total_steps
 
-
-def evaluate_policy(
+def rollout_policy(
     policy: Actor,
     env: gym.Env,
     device: torch.device,
-    replay_buffer: Buffer | None = None,
+    replay_buffer: Buffer,
     episodes: int = 1,
     noise_std: float = 0.0,
 ) -> tuple[float, int]:
@@ -229,16 +228,15 @@ def evaluate_policy(
             next_obs, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
 
-            if replay_buffer is not None:
-                replay_buffer.add(
-                    Transition(
-                        state=obs,
-                        action=action,
-                        reward=reward,
-                        next_state=next_obs,
-                        done=done,
-                    )
+            replay_buffer.add(
+                Transition(
+                    state=obs,
+                    action=action,
+                    reward=reward,
+                    next_state=next_obs,
+                    done=done,
                 )
+            )
 
             obs = next_obs
             episode_reward += reward
@@ -247,6 +245,42 @@ def evaluate_policy(
         total_reward += episode_reward
 
     return total_reward / episodes, total_steps
+
+
+
+def evaluate_policy(
+    policy: Actor,
+    env: gym.Env,
+    device: torch.device,
+    episodes: int = 1,
+    noise_std: float = 0.0,
+) -> float:
+    policy.eval()
+
+    total_reward = 0.0
+
+    for _ in range(episodes):
+        obs, _ = env.reset()
+        done = False
+        episode_reward = 0.0
+
+        while not done:
+            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+            with torch.no_grad():
+                action = policy(obs_t).squeeze(0).cpu().numpy()
+            if noise_std > 0.0:
+                action += noise_std * np.random.randn(*action.shape)
+
+            action = np.clip(action, env.action_space.low, env.action_space.high)
+            next_obs, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+
+            obs = next_obs
+            episode_reward += reward
+
+        total_reward += episode_reward
+
+    return total_reward / episodes
 
 
 def fintess_policy_evaluation(

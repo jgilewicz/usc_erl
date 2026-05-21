@@ -72,7 +72,7 @@ def PPO(
     entropy_coef: float = 0.0,
     actor_lr: float = 3e-4,
     critic_lr: float = 1e-3,
-    evaluate_episodes: int = 10,
+    evaluate_episodes: int = 5,
     eval_interval: int = 5000,
     logger: WandbLogger | None = None,
     debug: bool = False,

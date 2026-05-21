@@ -19,7 +19,7 @@ rl:
   exploration_noise_std: 0.1
 
 evaluation:
-  evaluate_episodes: 10
+  evaluate_episodes: 5
   eval_interval: 5000
 
 warmup:

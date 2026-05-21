@@ -34,7 +34,7 @@ def TD3(
     policy_delay: int = 2,
     exploration_noise_std: float = 0.1,
     warmup_steps: int = 1000,
-    evaluate_episodes: int = 10,
+    evaluate_episodes: int = 5,
     eval_interval: int = 5000,
     logger: WandbLogger | None = None,
     debug: bool = False,
@@ -177,7 +177,7 @@ def TD3(
             avg_reward = np.mean(episode_rewards) if episode_rewards else 0.0
             eval_reward = evaluate_policy(
                 actor, eval_env, device, episodes=evaluate_episodes
-            )[0]
+            )
 
             if logger is not None:
                 logger.log(

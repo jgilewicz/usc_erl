@@ -24,7 +24,7 @@ evolution:
   rl_injection_interval: 10
 
 evaluation:
-  evaluate_episodes: 1
+  evaluate_episodes: 5
 
 warmup:
   warmup_steps: 10_000

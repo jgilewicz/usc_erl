@@ -12,6 +12,7 @@ from common.utils import (
     train_actor_step,
     warmup,
     evaluate_policy,
+    rollout_policy,
     print_erl_debug_summary,
 )
 
@@ -35,7 +36,7 @@ def ERL(
     warmup_steps: int = 1000,
     actor_lr: float = 1e-3,
     critic_lr: float = 1e-3,
-    evaluate_episodes: int = 3,
+    evaluate_episodes: int = 5,
     exploration_noise_std: float = 0.1,
     gradient_steps: int = 100,
     logger: WandbLogger | None = None,
@@ -120,11 +121,11 @@ def ERL(
         actor_loss = 0.0
 
         for individual in population:
-            fitness, steps = evaluate_policy(
+            fitness, steps = rollout_policy(
                 policy=individual,
                 env=env,
-                replay_buffer=replay_buffer,
                 device=device,
+                replay_buffer=replay_buffer,
                 episodes=evaluate_episodes,
                 noise_std=0.0,
             )
@@ -145,16 +146,14 @@ def ERL(
             surrogate_evaluation=False,
         )
 
-        rl_reward, rl_steps = evaluate_policy(
+        rl_reward = evaluate_policy(
             policy=actor,
             env=env,
             device=device,
             episodes=evaluate_episodes,
-            replay_buffer=replay_buffer,
             noise_std=exploration_noise_std,
         )
 
-        total_steps += rl_steps
         recent_rewards.append(rl_reward)
 
         if len(replay_buffer) >= batch_size:
@@ -183,7 +182,7 @@ def ERL(
         # Once every few generations, inject the weakest actor into the population
         if generation % rl_injection_interval == 0:
             eval_fitnesses = [
-                evaluate_policy(ind, eval_env, device=device, episodes=1)[0]
+                evaluate_policy(ind, eval_env, device=device, episodes=5)
                 for ind in population
             ]
 
