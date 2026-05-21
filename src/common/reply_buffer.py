@@ -66,6 +66,9 @@ class Buffer:
         self, batch_size: int = 32, latest: bool = False
     ) -> dict[str, torch.Tensor]:
         if latest:
+            batch_size = min(batch_size, self.size)
+            if batch_size == 0:
+                raise ValueError("Cannot sample from an empty buffer")
             start = (self.ptr - batch_size) % self.capacity
             if start < self.ptr:
                 indices = np.arange(start, self.ptr)

@@ -12,6 +12,7 @@ from common.surrogate_controller import SurrogateController, SurrogateMode
 from common.utils import (
     evaluate_policy,
     print_sc_erl_debug_summary,
+    rollout_policy,
     train_actor_step,
     train_critic_step,
     warmup,
@@ -163,12 +164,22 @@ def SC_ERL(
         for fitness in fitnesses:
             recent_rewards.append(fitness)
 
+        _, rl_steps = rollout_policy(
+            policy=actor,
+            env=env,
+            device=device,
+            replay_buffer=replay_buffer,
+            episodes=1,
+            noise_std=exploration_noise_std,
+        )
+        total_steps += rl_steps
+
         rl_reward = evaluate_policy(
             policy=actor,
             env=env,
             device=device,
             episodes=5,
-            noise_std=exploration_noise_std,
+            noise_std=0.0,
         )
 
         recent_rewards.append(rl_reward)

@@ -283,39 +283,7 @@ def evaluate_policy(
     return total_reward / episodes
 
 
-def fintess_policy_evaluation(
-    self,
-    population: list[nn.Module],
-    replay_buffer: Buffer,
-    critic: nn.Module,
-    k: int = 5,
-) -> list[float]:
 
-    def _fitness_one_policy(
-        policy: nn.Module, obs: torch.Tensor, critic: nn.Module
-    ) -> float:
-        policy = policy.to(self.device)
-        policy.eval()
-
-        obs_t = obs.to(self.device)
-        critic.eval()
-
-        with torch.no_grad():
-            actions = policy(obs_t)
-            q_values = critic(obs_t, actions).squeeze(-1)
-
-        return q_values.mean().item()
-
-    k = min(k, len(replay_buffer))
-    batch = replay_buffer.sample_latest(batch_size=k)
-    obs = batch["state"].to(self.device)
-
-    fitness = []
-
-    for policy in population:
-        fitness.append(_fitness_one_policy(policy, obs, critic))
-
-    return fitness
 
 
 def td3_select_action(
@@ -425,7 +393,10 @@ def surrogate_fitness(
 
                 with torch.no_grad():
                     actions = policy(obs)
-                    q_values = critic(obs, actions).squeeze(-1)
+                    q_values = critic(obs, actions)
+                    if isinstance(q_values, tuple):
+                        q_values = q_values[0]
+                    q_values = q_values.squeeze(-1)
                     fitnesses.append(q_values.mean().item())
             finally:
                 policy.train(policy_was_training)
