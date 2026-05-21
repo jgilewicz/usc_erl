@@ -148,10 +148,10 @@ def ERL(
 
         rl_reward = evaluate_policy(
             policy=actor,
-            env=env,
+            env=eval_env,
             device=device,
             episodes=evaluate_episodes,
-            noise_std=exploration_noise_std,
+            noise_std=0.0,
         )
 
         recent_rewards.append(rl_reward)

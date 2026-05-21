@@ -176,7 +176,7 @@ def SC_ERL(
 
         rl_reward = evaluate_policy(
             policy=actor,
-            env=env,
+            env=eval_env,
             device=device,
             episodes=5,
             noise_std=0.0,
