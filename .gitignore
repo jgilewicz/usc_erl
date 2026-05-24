@@ -71,3 +71,7 @@ pytestdebug.log
 # Project specific / Local tasks
 .task/
 task.lock
+
+# Reuslts 
+*.csv
+*.png
