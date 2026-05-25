@@ -54,36 +54,31 @@ tasks:
     desc: "Runs envs on 2 GPUs (2 jobs per GPU) with env-specific step counts"
     cmds:
       - |
-        rm -rf .gpu_*
-        for env_info in FetchPushDense-v4:5000000 FetchPickAndPlaceDense-v4:10000000 FetchSlideDense-v4:20000000; do
-          env="${env_info%%:*}"
-          steps="${env_info##*:}"
-          for seed in 0 1 2 3 4; do
-            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"sc_erl_random_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,random]\""
-            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"sc_erl_dropout_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,dropout]\""
-            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"sc_erl_ensemble_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,ensemble]\""
-            echo "uv run python entry_point.py algorithm=td3 seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"td3_${env}_seed${seed}\" wandb.tags=\"[Fetch,td3,baseline]\""
-            echo "uv run python entry_point.py algorithm=erl seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"erl_${env}_seed${seed}\" wandb.tags=\"[Fetch,erl,baseline]\""
-            echo "uv run python entry_point.py algorithm=ppo seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"ppo_${env}_seed${seed}\" wandb.tags=\"[Fetch,ppo,baseline]\""
+        gpu=0
+        for seed in 0 1 2 3 4; do
+          for env_info in FetchPushDense-v4:5000000 FetchPickAndPlaceDense-v4:10000000 FetchSlideDense-v4:20000000; do
+            env="${env_info%%:*}"
+            steps="${env_info##*:}"
+            
+            echo "CUDA_VISIBLE_DEVICES=$gpu uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"sc_erl_random_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,random]\""
+            gpu=$((1 - gpu))
+            
+            echo "CUDA_VISIBLE_DEVICES=$gpu uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"sc_erl_dropout_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,dropout]\""
+            gpu=$((1 - gpu))
+            
+            echo "CUDA_VISIBLE_DEVICES=$gpu uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"sc_erl_ensemble_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,ensemble]\""
+            gpu=$((1 - gpu))
+            
+            echo "CUDA_VISIBLE_DEVICES=$gpu uv run python entry_point.py algorithm=td3 seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"td3_${env}_seed${seed}\" wandb.tags=\"[Fetch,td3,baseline]\""
+            gpu=$((1 - gpu))
+            
+            echo "CUDA_VISIBLE_DEVICES=$gpu uv run python entry_point.py algorithm=erl seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"erl_${env}_seed${seed}\" wandb.tags=\"[Fetch,erl,baseline]\""
+            gpu=$((1 - gpu))
+            
+            echo "CUDA_VISIBLE_DEVICES=$gpu uv run python entry_point.py algorithm=ppo seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"ppo_${env}_seed${seed}\" wandb.tags=\"[Fetch,ppo,baseline]\""
+            gpu=$((1 - gpu))
           done
-        done | shuf | xargs -I {} -P 4 bash -c '
-          run_on_free_gpu() {
-            while true; do
-              # Sloty: karta 0 (slot A i B), karta 1 (slot A i B)
-              for slot in 0_A 0_B 1_A 1_B; do
-                if mkdir ".gpu_$slot" 2>/dev/null; then
-                  # Wyciągnij prawdziwy numer GPU z nazwy slotu (0 lub 1)
-                  gpu_id=${slot%_*}
-                  CUDA_VISIBLE_DEVICES=$gpu_id "$@"
-                  rmdir ".gpu_$slot"
-                  return 0
-                fi
-              done
-              sleep 2
-            done
-          }
-          run_on_free_gpu {}
-        '
+        done | shuf | xargs -I {} -P 4 bash -c '{}'
 
   clean:
     desc: "Clean outputs and Hydra logs"
