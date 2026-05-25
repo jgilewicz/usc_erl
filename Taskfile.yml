@@ -21,7 +21,7 @@ tasks:
     desc: "Runs the full experiment matrix for Metaworld robots (4 environments x 5 seeds x algorithms)"
     cmds:
       - |
-        for env in button-press-v2 door-open-v2 drawer-close-v2 window-open-v2; do
+        for env in button-press-v2 door-open-v2 drawer-close-v2 window-open-v2 hammer-v2; do
           for seed in 0 1 2 3 4; do
             echo "=== Running: ENVIRONMENT=$env | SEED=$seed ==="
             uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=$env eval_env.id=$env n_steps=2000000 wandb.enabled=true wandb.name="sc_erl_dropout_${env}_seed${seed}" wandb.tags="[Metaworld,sc_erl,dropout]"
@@ -37,7 +37,7 @@ tasks:
     desc: "Runs the experiment matrix in parallel (Warning: uses more CPU/VRAM)"
     cmds:
       - |
-        for env in button-press-v2 door-open-v2 drawer-close-v2 window-open-v2; do
+        for env in button-press-v2 door-open-v2 drawer-close-v2 window-open-v2 hammer-v2; do
           for seed in 0 1 2 3 4; do
             echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=$env eval_env.id=$env n_steps=2000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_${env}_seed${seed}\" wandb.tags=\"[Metaworld,sc_erl,dropout]\""
             echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=$env eval_env.id=$env n_steps=2000000 wandb.enabled=true wandb.name=\"sc_erl_ensemble_${env}_seed${seed}\" wandb.tags=\"[Metaworld,sc_erl,ensemble]\""

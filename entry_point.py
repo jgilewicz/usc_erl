@@ -19,7 +19,7 @@ from TD3.td3 import TD3
 
 
 def make_env(env_id: str) -> gym.Env:
-    if "button-press" in env_id or "door-open" in env_id or "drawer-close" in env_id or "window-open" in env_id:
+    if "button-press" in env_id or "door-open" in env_id or "drawer-close" in env_id or "window-open" in env_id or "hammer" in env_id:
         import metaworld
         # Convert -v2 to -v3-goal-observable for Farama's Metaworld
         if env_id.endswith("-v2"):
