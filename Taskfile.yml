@@ -56,7 +56,7 @@ tasks:
     cmds:
       - |
         commands=()
-        for env in FetchReachDense-v4 FetchPushDense-v4; do
+        for env in FetchReachDense-v4 FetchPushDense-v4 FetchSlideDense-v4 FetchPickAndPlaceDense-v4; do
           for seed in 0 1 2 3 4; do
             commands+=("uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=$env eval_env.id=$env rl.total_steps=5000000 wandb.enabled=true wandb.name=\"sc_erl_random_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,random]\"")
             commands+=("uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=$env eval_env.id=$env rl.total_steps=5000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_${env}_seed${seed}\" wandb.tags=\"[Fetch,sc_erl,dropout]\"")
