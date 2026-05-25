@@ -48,7 +48,7 @@ tasks:
             echo "uv run python entry_point.py algorithm=erl seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"erl_${env}_seed${seed}\" wandb.tags=\"[Fetch,erl,baseline]\""
             echo "uv run python entry_point.py algorithm=ppo seed=$seed env.id=$env eval_env.id=$env n_steps=$steps wandb.enabled=true wandb.name=\"ppo_${env}_seed${seed}\" wandb.tags=\"[Fetch,ppo,baseline]\""
           done
-        done | xargs -I {} -P 16 bash -c '{}'
+        done | shuf | xargs -I {} -P 6 bash -c '{}'
 
   run-vast-parallel-optimized:
     desc: "Runs envs on 2 GPUs (2 jobs per GPU) with env-specific step counts"
