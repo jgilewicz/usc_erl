@@ -55,7 +55,7 @@ tasks:
           for seed in 0 1 2 3 4; do
             echo "uv run python entry_point.py algorithm=ddpg seed=$seed env.id=$env eval_env.id=$env n_steps=2000000 wandb.enabled=true wandb.name=\"ddpg_${env}_seed${seed}\" wandb.tags=\"[Metaworld,ddpg,baseline]\""
           done
-        done | shuf | xargs -I {} -P 8 bash -c '{}'
+        done | shuf | xargs -I {} -P 12 bash -c '{}'
 
   run-mujoco-parallel-ddpg:
     desc: "Runs the DDPG experiment matrix for MuJoCo in parallel"
@@ -65,7 +65,7 @@ tasks:
           for seed in 0 1 2 3 4; do
             echo "uv run python entry_point.py algorithm=ddpg seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"ddpg_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,ddpg,baseline]\""
           done
-        done | shuf | xargs -I {} -P 8 bash -c '{}'
+        done | shuf | xargs -I {} -P 12 bash -c '{}'
 
 
   clean:
