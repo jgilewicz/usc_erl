@@ -28,6 +28,24 @@ def print_td3_debug_summary(
     print()
 
 
+def print_ddpg_debug_summary(
+    total_steps: int,
+    avg_reward: float,
+    eval_reward: float,
+    actor_loss: float,
+    critic_loss: float,
+) -> None:
+    print(f"[DDPG] Steps {format_steps(total_steps)}")
+    print(
+        f"  Rewards     recent avg: {avg_reward:8.2f} | eval: {eval_reward:8.2f}"
+    )
+    print(
+        f"  Optimization actor loss: {actor_loss:8.4f} | critic loss: {critic_loss:8.4f}"
+    )
+    print()
+
+
+
 def print_erl_debug_summary(
     generation: int,
     total_steps: int,

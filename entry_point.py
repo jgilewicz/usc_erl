@@ -16,6 +16,7 @@ from ERL.erl import ERL
 from PPO.ppo import PPO
 from SC_ERL.sc_erl import SC_ERL
 from TD3.td3 import TD3
+from DDPG.ddpg import DDPG
 
 
 def make_env(env_id: str) -> gym.Env:
@@ -121,6 +122,27 @@ def main(cfg: DictConfig) -> None:
             policy_noise=cfg.rl.policy_noise,
             noise_clip=cfg.rl.noise_clip,
             policy_delay=cfg.rl.policy_delay,
+            exploration_noise_std=cfg.rl.exploration_noise_std,
+            warmup_steps=cfg.warmup.warmup_steps,
+            evaluate_episodes=cfg.evaluation.evaluate_episodes,
+            eval_interval=cfg.evaluation.eval_interval,
+            logger=logger,
+            debug=cfg.debug,
+        )
+    elif cfg.name == "ddpg":
+        DDPG(
+            buffer_size=cfg.buffer_size,
+            rng=np.random.default_rng(seed=cfg.seed),
+            env=make_env(cfg.env.id),
+            eval_env=make_env(cfg.eval_env.id),
+            n_steps=cfg.n_steps,
+            batch_size=cfg.batch_size,
+            device=device,
+            hidden_dim=cfg.network.hidden_dim,
+            gamma=cfg.rl.gamma,
+            tau=cfg.rl.tau,
+            actor_lr=cfg.rl.actor_lr,
+            critic_lr=cfg.rl.critic_lr,
             exploration_noise_std=cfg.rl.exploration_noise_std,
             warmup_steps=cfg.warmup.warmup_steps,
             evaluate_episodes=cfg.evaluation.evaluate_episodes,
