@@ -37,7 +37,6 @@ class SurrogateController:
         omega: float = 0.5,
         rng: np.random.Generator | None = None,
         k: int = 5,
-        history_window: int = 20,
         beta: float = 1.0,
     ):
         self.evolution_module = evolution_module
@@ -51,40 +50,12 @@ class SurrogateController:
 
         self.last_fitness = []
         self.last_uncertainty = []
-        self.uncertainty_history = []
-        self.uncertainty_history_window = max(1, history_window)
-        self.uncertainty_percentile = 70.0
         self.last_uncertainty_mean = 0.0
         self.last_uncertainty_max = 0.0
         self.last_uncertainty_threshold = 0.0
         self.mode = "real"
         self.surrogate_mode = surrogate_mode
 
-    def _real_or_surrogate_from_uncertainty(
-        self, uncertainties: list[float]
-    ) -> tuple[bool, float, float, float]:
-        mean_uncertainty = float(np.mean(uncertainties)) if uncertainties else 0.0
-        max_uncertainty = float(np.max(uncertainties)) if uncertainties else 0.0
-
-        recent_history = self.uncertainty_history[-self.uncertainty_history_window :]
-
-        if len(recent_history) < self.uncertainty_history_window:
-            threshold = float("inf")
-            use_real = True
-        else:
-            moving_mean = float(np.mean(recent_history))
-            percentile_threshold = float(
-                np.percentile(recent_history, self.uncertainty_percentile)
-            )
-            threshold = 0.5 * (moving_mean + percentile_threshold)
-            use_real = mean_uncertainty > threshold
-
-        self.uncertainty_history.append(mean_uncertainty)
-        self.uncertainty_history = self.uncertainty_history[
-            -self.uncertainty_history_window :
-        ]
-
-        return use_real, mean_uncertainty, max_uncertainty, threshold
 
     def generation_based_control(
         self,
@@ -124,11 +95,12 @@ class SurrogateController:
                     device=self.device,
                 )
             )
-            _, mean_uncertainty, max_uncertainty, threshold = (
-                self._real_or_surrogate_from_uncertainty(self.last_uncertainty)
-            )
+            mean_uncertainty = float(np.mean(self.last_uncertainty)) if self.last_uncertainty else 0.0
+            std_uncertainty = float(np.std(self.last_uncertainty)) if self.last_uncertainty else 0.0
+            threshold = mean_uncertainty + std_uncertainty
+
             self.last_uncertainty_mean = mean_uncertainty
-            self.last_uncertainty_max = max_uncertainty
+            self.last_uncertainty_max = float(np.max(self.last_uncertainty)) if self.last_uncertainty else 0.0
             self.last_uncertainty_threshold = threshold
 
             fitnesses = []
@@ -179,11 +151,12 @@ class SurrogateController:
 
             self.last_uncertainty = uncertainties
 
-            _, mean_uncertainty, max_uncertainty, threshold = (
-                self._real_or_surrogate_from_uncertainty(self.last_uncertainty)
-            )
+            mean_uncertainty = float(np.mean(self.last_uncertainty)) if self.last_uncertainty else 0.0
+            std_uncertainty = float(np.std(self.last_uncertainty)) if self.last_uncertainty else 0.0
+            threshold = mean_uncertainty + std_uncertainty
+
             self.last_uncertainty_mean = mean_uncertainty
-            self.last_uncertainty_max = max_uncertainty
+            self.last_uncertainty_max = float(np.max(self.last_uncertainty)) if self.last_uncertainty else 0.0
             self.last_uncertainty_threshold = threshold
 
             fitnesses = []
