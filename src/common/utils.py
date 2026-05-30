@@ -197,6 +197,7 @@ def train_actor_step(
 
     actor_optimizer.zero_grad()
     actor_loss.backward()
+    torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=1.0)
     actor_optimizer.step()
 
     soft_update(target_actor, actor, tau=tau)
@@ -374,6 +375,8 @@ def td3_train_critics(
     critic_1_optimizer.zero_grad()
     critic_2_optimizer.zero_grad()
     critic_loss.backward()
+    torch.nn.utils.clip_grad_norm_(critic_1.parameters(), max_norm=1.0)
+    torch.nn.utils.clip_grad_norm_(critic_2.parameters(), max_norm=1.0)
     critic_1_optimizer.step()
     critic_2_optimizer.step()
 
@@ -395,6 +398,7 @@ def td3_update_actor(
 
     actor_optimizer.zero_grad()
     actor_loss.backward()
+    torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=1.0)
     actor_optimizer.step()
 
     return actor_loss.item()
