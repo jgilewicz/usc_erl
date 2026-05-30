@@ -49,6 +49,7 @@ tasks:
   run-machine-1:
     desc: "Maszyna 1: Wszystkie algorytmy oprócz TD3 i PPO dla Hopper-v5 (25 zadań)"
     cmds:
+      - uv sync
       - |
         # Czyszczenie starego pliku przed generowaniem zadań
         rm -f /tmp/m1_jobs.txt
@@ -69,6 +70,7 @@ tasks:
   run-machine-2:
     desc: "Maszyna 2: MacBook M4 16GB (Wszystkie oprócz TD3 i PPO dla Swimmer-v5, 25 zadań)"
     cmds:
+      - uv sync
       - |
         # Czyszczenie starego pliku przed generowaniem zadań
         rm -f /tmp/m2_jobs.txt
@@ -89,6 +91,7 @@ tasks:
   run-machine-vastai:
     desc: "Dla Vast.ai (EPYC 7742 / RTX 3090 PCIe 4.0 16x): Wszystkie algorytmy oprócz TD3 i PPO dla HalfCheetah-v5 (25 zadań)"
     cmds:
+      - uv sync
       - |
         # Czyszczenie starego pliku przed generowaniem zadań
         rm -f /tmp/vast_jobs.txt
@@ -109,6 +112,7 @@ tasks:
   run-remaining-heavy-envs:
     desc: "Uruchomienie dla pozostałych 2 najcięższych środowisk (Ant-v5 i Walker2d-v5) dla 5 algorytmów (50 zadań)"
     cmds:
+      - uv sync
       - |
         # Czyszczenie starego pliku przed generowaniem zadań
         rm -f /tmp/heavy_jobs.txt
