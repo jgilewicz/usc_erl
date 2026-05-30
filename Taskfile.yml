@@ -89,7 +89,7 @@ tasks:
         rm -f /tmp/m2_jobs.txt
 
   run-machine-vastai:
-    desc: "Dla Vast.ai (EPYC 7742 / RTX 3090 PCIe 4.0 16x): Wszystkie algorytmy oprócz TD3 i PPO dla HalfCheetah-v5 (25 zadań)"
+    desc: "Dla Vast.ai (EPYC 24+ vCPU / RTX 3090): Wszystkie algorytmy oprócz TD3 i PPO dla HalfCheetah-v5 (25 zadań)"
     cmds:
       - uv sync
       - |
@@ -105,7 +105,7 @@ tasks:
           echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_random_HalfCheetah-v5_seed${seed}\" wandb.tags=\"[VastAI,MuJoCo,sc_erl,random]\"" >> /tmp/vast_jobs.txt
         done
 
-        # Uruchomienie (AMD EPYC 7742 25.6 vCPU / 51.5 GB RAM - optymalne -P 12, pełne PCIe 4.0/16x)
+        # Uruchomienie (EPYC 24+ vCPU / 50+ GB RAM - optymalne -P 12)
         cat /tmp/vast_jobs.txt | shuf | xargs -I {} -P 12 bash -c '{}'
         rm -f /tmp/vast_jobs.txt
 
