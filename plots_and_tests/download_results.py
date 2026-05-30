@@ -104,7 +104,7 @@ def main():
     print("Initializing WandB API...")
     api = wandb.Api()
 
-    project_path = "evo_rl/mujoco_surrogate_uncertainty_prediction"
+    project_path = "evo_rl/FINAL"
     print(f"Fetching runs from project '{project_path}'...")
     runs = api.runs(project_path)
     print(f"Total runs found: {len(runs)}")

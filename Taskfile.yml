@@ -46,6 +46,88 @@ tasks:
           done
         done | shuf | xargs -I {} -P 24 bash -c '{}'
 
+  run-machine-1:
+    desc: "Maszyna 1: Wszystkie algorytmy oprócz TD3 i PPO dla Hopper-v5 (25 zadań)"
+    cmds:
+      - |
+        # Czyszczenie starego pliku przed generowaniem zadań
+        rm -f /tmp/m1_jobs.txt
+
+        for seed in 0 1 2 3 4; do
+          for algo in erl ddpg; do
+            echo "uv run python entry_point.py algorithm=$algo seed=$seed env.id=Hopper-v5 eval_env.id=Hopper-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"${algo}_Hopper-v5_seed${seed}\" wandb.tags=\"[Maszyna1,MuJoCo,$algo]\"" >> /tmp/m1_jobs.txt
+          done
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=Hopper-v5 eval_env.id=Hopper-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_Hopper-v5_seed${seed}\" wandb.tags=\"[Maszyna1,MuJoCo,sc_erl,dropout]\"" >> /tmp/m1_jobs.txt
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=Hopper-v5 eval_env.id=Hopper-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_ensemble_Hopper-v5_seed${seed}\" wandb.tags=\"[Maszyna1,MuJoCo,sc_erl,ensemble]\"" >> /tmp/m1_jobs.txt
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=Hopper-v5 eval_env.id=Hopper-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_random_Hopper-v5_seed${seed}\" wandb.tags=\"[Maszyna1,MuJoCo,sc_erl,random]\"" >> /tmp/m1_jobs.txt
+        done
+
+        # Uruchomienie (dostosuj -P pod liczbę rdzeni CPU maszyny 1)
+        cat /tmp/m1_jobs.txt | shuf | xargs -I {} -P 4 bash -c '{}'
+        rm -f /tmp/m1_jobs.txt
+
+  run-machine-2:
+    desc: "Maszyna 2: MacBook M4 16GB (Wszystkie oprócz TD3 i PPO dla Swimmer-v5, 25 zadań)"
+    cmds:
+      - |
+        # Czyszczenie starego pliku przed generowaniem zadań
+        rm -f /tmp/m2_jobs.txt
+
+        for seed in 0 1 2 3 4; do
+          for algo in erl ddpg; do
+            echo "uv run python entry_point.py algorithm=$algo seed=$seed env.id=Swimmer-v5 eval_env.id=Swimmer-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"${algo}_Swimmer-v5_seed${seed}\" wandb.tags=\"[Maszyna2,MuJoCo,$algo]\"" >> /tmp/m2_jobs.txt
+          done
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=Swimmer-v5 eval_env.id=Swimmer-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_Swimmer-v5_seed${seed}\" wandb.tags=\"[Maszyna2,MuJoCo,sc_erl,dropout]\"" >> /tmp/m2_jobs.txt
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=Swimmer-v5 eval_env.id=Swimmer-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_ensemble_Swimmer-v5_seed${seed}\" wandb.tags=\"[Maszyna2,MuJoCo,sc_erl,ensemble]\"" >> /tmp/m2_jobs.txt
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=Swimmer-v5 eval_env.id=Swimmer-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_random_Swimmer-v5_seed${seed}\" wandb.tags=\"[Maszyna2,MuJoCo,sc_erl,random]\"" >> /tmp/m2_jobs.txt
+        done
+
+        # Uruchomienie (MacBook M4 16GB Unified RAM - zrównoważone -P 2 dla stabilnego MPS bez przegrzewania i swapu)
+        cat /tmp/m2_jobs.txt | shuf | xargs -I {} -P 2 bash -c '{}'
+        rm -f /tmp/m2_jobs.txt
+
+  run-machine-vastai:
+    desc: "Dla Vast.ai (EPYC 7742 / RTX 3090 PCIe 4.0 16x): Wszystkie algorytmy oprócz TD3 i PPO dla HalfCheetah-v5 (25 zadań)"
+    cmds:
+      - |
+        # Czyszczenie starego pliku przed generowaniem zadań
+        rm -f /tmp/vast_jobs.txt
+
+        for seed in 0 1 2 3 4; do
+          for algo in erl ddpg; do
+            echo "uv run python entry_point.py algorithm=$algo seed=$seed env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"${algo}_HalfCheetah-v5_seed${seed}\" wandb.tags=\"[VastAI,MuJoCo,$algo]\"" >> /tmp/vast_jobs.txt
+          done
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_HalfCheetah-v5_seed${seed}\" wandb.tags=\"[VastAI,MuJoCo,sc_erl,dropout]\"" >> /tmp/vast_jobs.txt
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_ensemble_HalfCheetah-v5_seed${seed}\" wandb.tags=\"[VastAI,MuJoCo,sc_erl,ensemble]\"" >> /tmp/vast_jobs.txt
+          echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5 n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_random_HalfCheetah-v5_seed${seed}\" wandb.tags=\"[VastAI,MuJoCo,sc_erl,random]\"" >> /tmp/vast_jobs.txt
+        done
+
+        # Uruchomienie (AMD EPYC 7742 25.6 vCPU / 51.5 GB RAM - optymalne -P 12, pełne PCIe 4.0/16x)
+        cat /tmp/vast_jobs.txt | shuf | xargs -I {} -P 12 bash -c '{}'
+        rm -f /tmp/vast_jobs.txt
+
+  run-remaining-heavy-envs:
+    desc: "Uruchomienie dla pozostałych 2 najcięższych środowisk (Ant-v5 i Walker2d-v5) dla 5 algorytmów (50 zadań)"
+    cmds:
+      - |
+        # Czyszczenie starego pliku przed generowaniem zadań
+        rm -f /tmp/heavy_jobs.txt
+
+        for env in Ant-v5 Walker2d-v5; do
+          for seed in 0 1 2 3 4; do
+            for algo in erl ddpg; do
+              echo "uv run python entry_point.py algorithm=$algo seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"${algo}_${env}_seed${seed}\" wandb.tags=\"[HeavyEnv,MuJoCo,$algo]\"" >> /tmp/heavy_jobs.txt
+            done
+            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_${env}_seed${seed}\" wandb.tags=\"[HeavyEnv,MuJoCo,sc_erl,dropout]\"" >> /tmp/heavy_jobs.txt
+            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_ensemble_${env}_seed${seed}\" wandb.tags=\"[HeavyEnv,MuJoCo,sc_erl,ensemble]\"" >> /tmp/heavy_jobs.txt
+            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_random_${env}_seed${seed}\" wandb.tags=\"[HeavyEnv,MuJoCo,sc_erl,random]\"" >> /tmp/heavy_jobs.txt
+          done
+        done
+
+        # Uruchomienie (zoptymalizowane pod 25.6 vCPUs -P 12 dla serwera / Vast.ai)
+        cat /tmp/heavy_jobs.txt | shuf | xargs -I {} -P 12 bash -c '{}'
+        rm -f /tmp/heavy_jobs.txt
+
 
   clean:
     desc: "Clean outputs and Hydra logs"

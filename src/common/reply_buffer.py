@@ -28,35 +28,27 @@ class Buffer:
         self.device = device
 
         self.state = torch.zeros(
-            (capacity, state_dim), dtype=torch.float32, device=device
+            (capacity, state_dim), dtype=torch.float32, device="cpu"
         )
         self.action = torch.zeros(
-            (capacity, action_dim), dtype=torch.float32, device=device
+            (capacity, action_dim), dtype=torch.float32, device="cpu"
         )
-        self.reward = torch.zeros((capacity, 1), dtype=torch.float32, device=device)
+        self.reward = torch.zeros((capacity, 1), dtype=torch.float32, device="cpu")
         self.next_state = torch.zeros(
-            (capacity, state_dim), dtype=torch.float32, device=device
+            (capacity, state_dim), dtype=torch.float32, device="cpu"
         )
-        self.done = torch.zeros((capacity, 1), dtype=torch.float32, device=device)
+        self.done = torch.zeros((capacity, 1), dtype=torch.float32, device="cpu")
 
         self.ptr = 0
         self.size = 0
 
     def add(self, transition: Transition) -> None:
-        self.state[self.ptr] = torch.tensor(
-            transition.state, dtype=torch.float32, device=self.device
-        )
-        self.action[self.ptr] = torch.tensor(
-            transition.action, dtype=torch.float32, device=self.device
-        )
-        self.reward[self.ptr] = torch.tensor(
-            transition.reward, dtype=torch.float32, device=self.device
-        )
-        self.next_state[self.ptr] = torch.tensor(
-            transition.next_state, dtype=torch.float32, device=self.device
-        )
-        self.done[self.ptr] = torch.tensor(
-            np.asarray(transition.done), dtype=torch.float32, device=self.device
+        self.state[self.ptr] = torch.as_tensor(transition.state, dtype=torch.float32)
+        self.action[self.ptr] = torch.as_tensor(transition.action, dtype=torch.float32)
+        self.reward[self.ptr] = torch.as_tensor(transition.reward, dtype=torch.float32)
+        self.next_state[self.ptr] = torch.as_tensor(transition.next_state, dtype=torch.float32)
+        self.done[self.ptr] = torch.as_tensor(
+            np.asarray(transition.done), dtype=torch.float32
         )
 
         self.ptr = (self.ptr + 1) % self.capacity
@@ -80,11 +72,11 @@ class Buffer:
             indices = self.rng.choice(self.size, batch_size, replace=False)
 
         return {
-            "state": self.state[indices],
-            "action": self.action[indices],
-            "reward": self.reward[indices],
-            "next_state": self.next_state[indices],
-            "done": self.done[indices],
+            "state": self.state[indices].to(self.device),
+            "action": self.action[indices].to(self.device),
+            "reward": self.reward[indices].to(self.device),
+            "next_state": self.next_state[indices].to(self.device),
+            "done": self.done[indices].to(self.device),
         }
 
     def sample_latest(self, batch_size: int = None) -> dict[str, torch.Tensor]:

@@ -135,16 +135,18 @@ def train_critic_step(
 ) -> float:
     if hasattr(critic, "critics") and hasattr(target_critic, "critics"):
         critic_loss = 0.0
+        batch = replay_buffer.sample(batch_size=batch_size)
+        with torch.no_grad():
+            next_action = target_actor(batch["next_state"])
+            
         for critic_i, target_critic_i in zip(critic.critics, target_critic.critics):
-            batch_i = replay_buffer.sample(batch_size=batch_size)
             with torch.no_grad():
-                next_action_i = target_actor(batch_i["next_state"])
-                next_q_i = target_critic_i(batch_i["next_state"], next_action_i)
+                next_q_i = target_critic_i(batch["next_state"], next_action)
                 target_q_i = (
-                    batch_i["reward"] + (1.0 - batch_i["done"]) * gamma * next_q_i
+                    batch["reward"] + (1.0 - batch["done"]) * gamma * next_q_i
                 )
 
-            current_q_i = critic_i(batch_i["state"], batch_i["action"])
+            current_q_i = critic_i(batch["state"], batch["action"])
             critic_loss += F.mse_loss(current_q_i, target_q_i)
     else:
         batch = replay_buffer.sample(batch_size=batch_size)

@@ -55,6 +55,8 @@ def main(cfg: DictConfig) -> None:
     device = torch.device(
         "cuda"
         if cfg.device == "auto" and torch.cuda.is_available()
+        else "mps"
+        if cfg.device == "auto" and torch.backends.mps.is_available()
         else "cpu"
         if cfg.device == "auto"
         else cfg.device
