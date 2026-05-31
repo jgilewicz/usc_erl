@@ -32,9 +32,11 @@ def main():
         "sc_erl_evidential",
     ]
     environments = [
-        "FetchPush-v4",
-        "FetchSlide-v4",
-        "FetchPickAndPlace-v4",
+        "HalfCheetah-v4",
+        "Hopper-v4",
+        "Walker2d-v4",
+        "Ant-v4",
+        "Swimmer-v4",
     ]
 
     # Capture any additional Hydra parameters or overrides passed via command line

@@ -125,10 +125,7 @@ def save_algorithm_config(
 
 def make_env(env_id: str) -> gym.Env:
     env = gym.make(env_id)
-    if "Fetch" in env_id:
-        from common.fetch_wrappers import FetchCustomRewardWrapper
 
-        env = FetchCustomRewardWrapper(env, env_id)
     if isinstance(env.observation_space, gym.spaces.Dict):
         env = gym.wrappers.FlattenObservation(env)
     return env

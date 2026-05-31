@@ -1,0 +1,36 @@
+# @package _global_
+name: sc_erl
+buffer_size: 200000
+n_steps: 1000000
+batch_size: 256
+network:
+  actor_hidden_dim: 256
+  critic_hidden_dim: 256
+rl:
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  exploration_noise_std: 0.1
+  gradient_steps: 1000
+evolution:
+  population_size: 10
+  mutation_std: 0.1
+  mutation_prob: 0.9
+  elite_ratio: 0.2
+  rl_injection_interval: 1
+surrogate:
+  enabled: true
+  omega: 0.828666668379165
+  evo_buffer_size: 1000
+  k_ensembles: 5
+  mode: dropout
+  beta: 2.1362060989704235
+  dropout_p: 0.05
+  mc_samples: 20
+  min_uncertainty_floor: 0.01
+  percentile: 75
+  epsilon: 0.1
+  lam: 0.1
+warmup:
+  warmup_steps: 10000

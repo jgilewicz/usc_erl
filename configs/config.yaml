@@ -6,12 +6,12 @@ device: auto
 debug: false
 grad_clip_norm: 1.0
 env:
-  id: FetchPush-v4
+  id: HalfCheetah-v4
 eval_env:
-  id: FetchPush-v4
+  id: HalfCheetah-v4
 wandb:
   enabled: true
-  project: new_tests
+  project: PHOENIX
   entity: evo_rl
   name: null
   tags: []
