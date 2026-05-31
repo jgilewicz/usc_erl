@@ -105,6 +105,16 @@ class StateCritic(nn.Module):
 
 
 class EvidentialModule(nn.Module):
+    """Normal-Inverse-Gamma output head for Deep Evidential Regression.
+
+    Numerical stability notes:
+    - v and beta are floored at `_EPS` to prevent division-by-zero in the
+      epistemic variance formula: σ² = β / (v · (α - 1)).
+    - mu is clamped to prevent extreme Q-value predictions from corrupting
+      actor gradients and causing MuJoCo simulation instability (NaN actions).
+    """
+    _EPS: float = 1e-4
+
     def __init__(self, in_features: int, units: int = 1):
         super(EvidentialModule, self).__init__()
         self.units = units
@@ -116,9 +126,13 @@ class EvidentialModule(nn.Module):
     def forward(self, x):
         output = self.dense(x)
         mu, logv, logalpha, logbeta = torch.split(output, self.units, dim=-1)
-        v = self.evidence(logv)
-        alpha = self.evidence(logalpha) + 1.0
-        beta = self.evidence(logbeta)
+        # Floor v and beta to avoid zero denominators in epistemic variance
+        v     = self.evidence(logv)     + self._EPS
+        alpha = self.evidence(logalpha) + 1.0 + self._EPS
+        beta  = self.evidence(logbeta)  + self._EPS
+        # Clamp mu to a safe range — prevents extreme Q-values from producing
+        # NaN actor gradients that would destabilise the MuJoCo simulation
+        mu = torch.clamp(mu, -1e4, 1e4)
         return mu, v, alpha, beta
 
 

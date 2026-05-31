@@ -123,7 +123,8 @@ class SurrogateController:
                                 actions = policy(obs)
                                 mu, v, alpha, beta = self.critic(obs, actions)
                                 epistemic_var = beta / (v * (alpha - 1.0) + 1e-6)
-                                epistemic_std = torch.sqrt(epistemic_var)
+                                epistemic_var = torch.nan_to_num(epistemic_var, nan=0.0, posinf=1e3, neginf=0.0)
+                                epistemic_std = torch.sqrt(epistemic_var.clamp(min=0.0))
                             uncertainties.append(epistemic_std.mean().item())
                         self.last_uncertainty = uncertainties
                     else:
@@ -288,8 +289,9 @@ class SurrogateController:
                     actions = policy(obs)
                     mu, v, alpha, beta = self.critic(obs, actions)
                     epistemic_var = beta / (v * (alpha - 1.0) + 1e-6)
-
-                    epistemic_std = torch.sqrt(epistemic_var)
+                    # Guard against NaN/inf from early-training instability
+                    epistemic_var = torch.nan_to_num(epistemic_var, nan=0.0, posinf=1e3, neginf=0.0)
+                    epistemic_std = torch.sqrt(epistemic_var.clamp(min=0.0))
 
                 surrogate_fitnesses.append(mu.mean().item())
                 uncertainties.append(epistemic_std.mean().item())
@@ -366,12 +368,18 @@ class SurrogateController:
             self.last_uncertainty_threshold = 0.0
             return 0.0
 
-        mean_uncertainty = float(np.mean(self.last_uncertainty))
+        # Sanitize: replace any NaN/inf that slipped through with 0.0
+        uncertainties = np.nan_to_num(
+            np.array(self.last_uncertainty, dtype=np.float64),
+            nan=0.0, posinf=1e3, neginf=0.0,
+        )
+
+        mean_uncertainty = float(np.mean(uncertainties))
         self.last_uncertainty_mean = mean_uncertainty
-        self.last_uncertainty_max = float(np.max(self.last_uncertainty))
+        self.last_uncertainty_max = float(np.max(uncertainties))
 
         # Percentile threshold (configurable)
-        threshold = float(np.percentile(self.last_uncertainty, self.percentile))
+        threshold = float(np.percentile(uncertainties, self.percentile))
 
         self.last_uncertainty_threshold = threshold
         return threshold
