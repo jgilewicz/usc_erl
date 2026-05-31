@@ -38,7 +38,8 @@ def DDPG(
     n_steps: int,
     batch_size: int = 256,
     device: torch.device = torch.device("cpu"),
-    hidden_dim: int = 256,
+    actor_hidden_dim: int = 256,
+    critic_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
     actor_lr: float = 3e-4,
@@ -49,7 +50,8 @@ def DDPG(
     eval_interval: int = 5000,
     logger: WandbLogger | None = None,
     debug: bool = False,
-) -> None:
+    grad_clip_norm: float = 1.0,
+) -> float:
 
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
@@ -58,14 +60,14 @@ def DDPG(
     actor = Actor(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
     ).to(device)
 
     actor_target = Actor(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
     ).to(device)
     actor_target.load_state_dict(actor.state_dict())
@@ -73,14 +75,14 @@ def DDPG(
     critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
 
     critic_target = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
     critic_target.load_state_dict(critic.state_dict())
@@ -150,6 +152,7 @@ def DDPG(
             batch_size=batch_size,
             gamma=gamma,
             tau=tau,
+            grad_clip_norm=grad_clip_norm,
         )
 
         actor_loss = train_actor_step(
@@ -160,6 +163,7 @@ def DDPG(
             replay_buffer=replay_buffer,
             batch_size=batch_size,
             tau=tau,
+            grad_clip_norm=grad_clip_norm,
         )
 
         if total_steps % eval_interval == 0:
@@ -188,3 +192,5 @@ def DDPG(
                     actor_loss=actor_loss,
                     critic_loss=critic_loss,
                 )
+
+    return float(eval_reward)

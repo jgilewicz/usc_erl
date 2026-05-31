@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Actor(nn.Module):
@@ -98,3 +99,47 @@ class StateCritic(nn.Module):
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         return self.net(state)
+
+
+class EvidentialModule(nn.Module):
+    def __init__(self, in_features: int, units: int = 1):
+        super(EvidentialModule, self).__init__()
+        self.units = units
+        self.dense = nn.Linear(in_features, 4 * self.units)
+
+    def evidence(self, x):
+        return F.softplus(x)
+
+    def forward(self, x):
+        output = self.dense(x)
+        mu, logv, logalpha, logbeta = torch.split(output, self.units, dim=-1)
+        v = self.evidence(logv)
+        alpha = self.evidence(logalpha) + 1.0
+        beta = self.evidence(logbeta)
+        return mu, v, alpha, beta
+
+
+class EvidentialCritic(nn.Module):
+    def __init__(self, state_dim: int, action_dim: int, hidden_dim: int) -> None:
+        super(EvidentialCritic, self).__init__()
+
+        self.state_net = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+        )
+
+        self.net = nn.Sequential(
+            nn.Linear(hidden_dim + action_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
+
+        self.evidential_output = EvidentialModule(in_features=hidden_dim, units=1)
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor):
+        state_features = self.state_net(state)
+        x = torch.cat([state_features, action], dim=-1)
+        x = self.net(x)
+
+        return self.evidential_output(x)

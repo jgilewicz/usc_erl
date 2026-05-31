@@ -1,13 +1,12 @@
 # @package _global_
 name: erl
-
-population_size: 10
-buffer_size: 200_000
-n_steps: 1_000_000
+buffer_size: 200000
+n_steps: 1000000
 batch_size: 256
 
 network:
-  hidden_dim: 256
+  actor_hidden_dim: 256
+  critic_hidden_dim: 256
 
 rl:
   gamma: 0.99
@@ -18,13 +17,14 @@ rl:
   gradient_steps: 1000
 
 evolution:
-  mutation_std: 0.1 
-  mutation_prob: 0.9 
+  population_size: 10
+  mutation_std: 0.1      
+  mutation_prob: 0.9    
   elite_ratio: 0.2       
   rl_injection_interval: 1 
 
 evaluation:
   evaluate_episodes: 5
-
+  
 warmup:
-  warmup_steps: 10_000
+  warmup_steps: 10000

@@ -16,7 +16,8 @@ rl:
   ppo_epochs: 10
 
 network:
-  hidden_dim: 256
+  actor_hidden_dim: 256
+  critic_hidden_dim: 256
 
 evaluation:
   evaluate_episodes: 5

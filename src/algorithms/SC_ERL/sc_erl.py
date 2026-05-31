@@ -4,9 +4,9 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from common.ensemble_module import EnsembleModule
+from modules.ensemble_module import EnsembleModule
 from common.evolution_module import EvolutionModule
-from common.modules import Actor, Critic
+from modules.deep_modules import Actor, Critic, EvidentialCritic
 from common.reply_buffer import Buffer
 from common.surrogate_controller import SurrogateController, SurrogateMode
 from common.utils import (
@@ -29,7 +29,8 @@ def SC_ERL(
     n_steps: int,
     batch_size: int = 64,
     device: torch.device = torch.device("cpu"),
-    hidden_dim: int = 256,
+    actor_hidden_dim: int = 256,
+    critic_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
     mutation_std: float = 0.05,
@@ -45,10 +46,17 @@ def SC_ERL(
     k: int = 5,
     logger: WandbLogger | None = None,
     surrogate_mode: SurrogateMode = SurrogateMode.RANDOM,
-    ensemble_size: int = 5,
+    k_ensembles: int = 5,
     beta: float = 1.0,
     debug: bool = False,
-) -> None:
+    grad_clip_norm: float = 1.0,
+    dropout_p: float = 0.2,
+    mc_samples: int = 20,
+    min_uncertainty_floor: float = 0.01,
+    epsilon: float = 0.10,
+    percentile: int = 75,
+    lam: float = 0.1,
+) -> float:
 
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
@@ -58,7 +66,7 @@ def SC_ERL(
         Actor(
             state_dim=state_dim,
             action_dim=action_dim,
-            hidden_dim=hidden_dim,
+            hidden_dim=actor_hidden_dim,
             action_limit=action_limit,
         ).to(device)
         for _ in range(population_size)
@@ -67,14 +75,14 @@ def SC_ERL(
     actor = Actor(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
     ).to(device)
 
     target_actor = Actor(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
     ).to(device)
 
@@ -83,14 +91,14 @@ def SC_ERL(
     critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
 
     target_critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
 
@@ -98,15 +106,30 @@ def SC_ERL(
 
     if surrogate_mode == SurrogateMode.ENSEMBLE:
         critic = EnsembleModule(
-            ensemble_size=ensemble_size,
+            ensemble_size=k_ensembles,
             critic=critic,
             rng=rng,
         ).to(device)
 
         target_critic = EnsembleModule(
-            ensemble_size=ensemble_size,
+            ensemble_size=k_ensembles,
             critic=target_critic,
             rng=rng,
+        ).to(device)
+
+        target_critic.load_state_dict(critic.state_dict())
+
+    if surrogate_mode == SurrogateMode.EVIDENTIAL:
+        critic = EvidentialCritic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            hidden_dim=critic_hidden_dim,
+        ).to(device)
+
+        target_critic = EvidentialCritic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            hidden_dim=critic_hidden_dim,
         ).to(device)
 
         target_critic.load_state_dict(critic.state_dict())
@@ -140,6 +163,11 @@ def SC_ERL(
         k=k,
         surrogate_mode=surrogate_mode,
         beta=beta,
+        dropout_p=dropout_p,
+        mc_samples=mc_samples,
+        min_uncertainty_floor=min_uncertainty_floor,
+        epsilon=epsilon,
+        percentile=percentile,
     )
 
     total_steps = warmup(env, replay_buffer, warmup_steps=warmup_steps)
@@ -158,6 +186,8 @@ def SC_ERL(
                 mutation_std=mutation_std,
                 mutation_prob=mutation_prob,
                 elite_ratio=elite_ratio,
+                total_steps=total_steps,
+                warmup_steps=warmup_steps,
             )
         )
 
@@ -176,7 +206,7 @@ def SC_ERL(
         )
         total_steps += rl_steps
 
-        rl_reward = evaluate_policy(
+        eval_reward = evaluate_policy(
             policy=actor,
             env=eval_env,
             device=device,
@@ -184,7 +214,7 @@ def SC_ERL(
             noise_std=0.0,
         )
 
-        recent_rewards.append(rl_reward)
+        recent_rewards.append(eval_reward)
 
         critic_loss = 0.0
         actor_loss = 0.0
@@ -199,6 +229,8 @@ def SC_ERL(
                     batch_size=batch_size,
                     gamma=gamma,
                     tau=tau,
+                    grad_clip_norm=grad_clip_norm,
+                    lam=lam,
                 )
 
                 actor_loss = train_actor_step(
@@ -209,6 +241,7 @@ def SC_ERL(
                     replay_buffer=replay_buffer,
                     batch_size=batch_size,
                     tau=tau,
+                    grad_clip_norm=grad_clip_norm,
                 )
 
         if generation % rl_injection_interval == 0:
@@ -226,7 +259,7 @@ def SC_ERL(
                     avg_fitness=avg_fitness,
                     best_fitness=best_fitness,
                     avg_reward=avg_reward,
-                    rl_reward=rl_reward,
+                    eval_reward=eval_reward,
                     evo_steps=evo_steps,
                     actor_loss=actor_loss,
                     critic_loss=critic_loss,
@@ -259,7 +292,7 @@ def SC_ERL(
                 "avg_population_fitness": avg_fitness,
                 "best_population_fitness": best_fitness,
                 "avg_recent_reward": avg_reward,
-                "rl_reward": rl_reward,
+                "eval_reward": eval_reward,
                 "actor_loss": actor_loss,
                 "critic_loss": critic_loss,
                 "surrogate_used": surrogate_controller.mode == "surrogate",
@@ -281,10 +314,14 @@ def SC_ERL(
                     "surrogate_mode": surrogate_mode.value,
                     "omega": omega,
                     "k": k,
+                    "dropout_p": dropout_p,
+                    "mc_samples": mc_samples,
                 }
             )
 
             logger.log(
                 metrics,
-                step=generation,
+                step=total_steps,
             )
+
+    return float(eval_reward)

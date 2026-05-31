@@ -13,6 +13,7 @@ dependencies = [
     "matplotlib>=3.10.9",
     "metaworld>=3.0.0",
     "opencv-python>=4.13.0.92",
+    "optuna>=4.8.0",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "tabulate>=0.10.0",

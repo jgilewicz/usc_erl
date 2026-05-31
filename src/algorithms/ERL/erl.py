@@ -26,7 +26,8 @@ def ERL(
     n_steps: int,
     batch_size: int = 64,
     device: torch.device = torch.device("cpu"),
-    hidden_dim: int = 256,
+    actor_hidden_dim: int = 256,
+    critic_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
     mutation_std: float = 0.05,
@@ -41,7 +42,8 @@ def ERL(
     gradient_steps: int = 100,
     logger: WandbLogger | None = None,
     debug: bool = False,
-) -> None:
+    grad_clip_norm: float = 1.0,
+) -> float:
 
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
@@ -51,7 +53,7 @@ def ERL(
         Actor(
             state_dim=state_dim,
             action_dim=action_dim,
-            hidden_dim=hidden_dim,
+            hidden_dim=actor_hidden_dim,
             action_limit=action_limit,
         ).to(device)
         for _ in range(population_size)
@@ -60,14 +62,14 @@ def ERL(
     actor = Actor(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
     ).to(device)
 
     target_actor = Actor(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
     ).to(device)
 
@@ -76,14 +78,14 @@ def ERL(
     critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
 
     target_critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
 
@@ -158,7 +160,7 @@ def ERL(
         )
         total_steps += rl_steps
 
-        rl_reward = evaluate_policy(
+        eval_reward = evaluate_policy(
             policy=actor,
             env=eval_env,
             device=device,
@@ -166,7 +168,7 @@ def ERL(
             noise_std=0.0,
         )
 
-        recent_rewards.append(rl_reward)
+        recent_rewards.append(eval_reward)
 
         if len(replay_buffer) >= batch_size:
             for _ in range(gradient_steps):
@@ -179,6 +181,7 @@ def ERL(
                     batch_size=batch_size,
                     gamma=gamma,
                     tau=tau,
+                    grad_clip_norm=grad_clip_norm,
                 )
 
                 actor_loss = train_actor_step(
@@ -189,6 +192,7 @@ def ERL(
                     replay_buffer=replay_buffer,
                     batch_size=batch_size,
                     tau=tau,
+                    grad_clip_norm=grad_clip_norm,
                 )
 
         if generation % rl_injection_interval == 0:
@@ -206,7 +210,7 @@ def ERL(
                     avg_fitness=avg_fitness,
                     best_fitness=best_fitness,
                     avg_reward=avg_reward,
-                    rl_reward=rl_reward,
+                    eval_reward=eval_reward,
                     actor_loss=actor_loss,
                     critic_loss=critic_loss,
                 )
@@ -219,9 +223,11 @@ def ERL(
                     "avg_population_fitness": avg_fitness,
                     "best_population_fitness": best_fitness,
                     "avg_recent_reward": avg_reward,
-                    "rl_reward": rl_reward,
+                    "eval_reward": eval_reward,
                     "actor_loss": actor_loss,
                     "critic_loss": critic_loss,
                 },
-                step=generation,
+                step=total_steps,
             )
+
+    return float(eval_reward)

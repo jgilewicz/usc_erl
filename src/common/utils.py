@@ -5,6 +5,7 @@ from common.reply_buffer import Buffer, Transition
 import gymnasium as gym
 import numpy as np
 from common.modules import Actor, Critic
+import math
 
 
 def format_steps(value: int) -> str:
@@ -47,7 +48,7 @@ def print_erl_debug_summary(
     avg_fitness: float,
     best_fitness: float,
     avg_reward: float,
-    rl_reward: float,
+    eval_reward: float,
     actor_loss: float,
     critic_loss: float,
 ) -> None:
@@ -57,7 +58,7 @@ def print_erl_debug_summary(
         f"recent avg reward: {avg_reward:8.2f}"
     )
     print(
-        f"  RL policy       reward: {rl_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
+        f"  RL policy       reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
         f"critic loss: {critic_loss:8.4f}"
     )
     print()
@@ -69,7 +70,7 @@ def print_sc_erl_debug_summary(
     avg_fitness: float,
     best_fitness: float,
     avg_reward: float,
-    rl_reward: float,
+    eval_reward: float,
     evo_steps: int,
     actor_loss: float,
     critic_loss: float,
@@ -84,7 +85,7 @@ def print_sc_erl_debug_summary(
         f"recent avg reward: {avg_reward:8.2f}"
     )
     print(
-        f"  RL policy       reward: {rl_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
+        f"  RL policy       reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
         f"critic loss: {critic_loss:8.4f}"
     )
     print(f"  Evolution       steps: {format_steps(evo_steps)}")
@@ -123,6 +124,34 @@ def soft_update(target: nn.Module, source: nn.Module, tau: float) -> None:
         )
 
 
+def evidential_loss(
+    y_true: torch.Tensor,
+    mu: torch.Tensor,
+    v: torch.Tensor,
+    alpha: torch.Tensor,
+    beta: torch.Tensor,
+    lam: float = 0.1,
+) -> torch.Tensor:
+
+    # 1. Negative Log-Likelihood (NLL)
+    twoB_1_v = 2 * beta * (1 + v)
+    error = y_true - mu
+
+    nll = (
+        0.5 * math.log(math.pi)
+        - 0.5 * torch.log(v)
+        - alpha * torch.log(twoB_1_v)
+        + (alpha + 0.5) * torch.log(twoB_1_v + v * error.pow(2))
+        + torch.lgamma(alpha)
+        - torch.lgamma(alpha + 0.5)
+    )
+
+    # 2. Evidence Regularization
+    reg = torch.abs(error) * (2 * v + alpha)
+
+    return (nll + lam * reg).mean()
+
+
 def train_critic_step(
     target_actor: nn.Module,
     critic: nn.Module,
@@ -132,7 +161,10 @@ def train_critic_step(
     batch_size: int,
     gamma: float = 0.99,
     tau: float = 0.005,
+    grad_clip_norm: float = 1.0,
+    lam: float = 0.1,
 ) -> float:
+
     if hasattr(critic, "critics") and hasattr(target_critic, "critics"):
         critic_loss = 0.0
         for critic_i, target_critic_i in zip(critic.critics, target_critic.critics):
@@ -146,28 +178,39 @@ def train_critic_step(
 
             current_q_i = critic_i(batch_i["state"], batch_i["action"])
             critic_loss += F.mse_loss(current_q_i, target_q_i)
+
     else:
         batch = replay_buffer.sample(batch_size=batch_size)
 
         with torch.no_grad():
             next_action = target_actor(batch["next_state"])
+
             if hasattr(target_critic, "compute_loss"):
                 next_q_mean, _ = target_critic(batch["next_state"], next_action)
                 next_q = next_q_mean
             else:
-                next_q = target_critic(batch["next_state"], next_action)
+                target_out = target_critic(batch["next_state"], next_action)
+                next_q = target_out[0] if isinstance(target_out, tuple) else target_out
 
             target_q = batch["reward"] + (1.0 - batch["done"]) * gamma * next_q
 
         if hasattr(critic, "compute_loss"):
             critic_loss = critic.compute_loss(batch["state"], batch["action"], target_q)
         else:
-            critic_loss = torch.nn.MSELoss()(
-                critic(batch["state"], batch["action"]), target_q
-            )
+            current_out = critic(batch["state"], batch["action"])
+
+            if isinstance(current_out, tuple) and len(current_out) == 4:
+                mu, v, alpha, beta = current_out
+                critic_loss = evidential_loss(target_q, mu, v, alpha, beta, lam=lam)
+
+            elif isinstance(current_out, tuple):
+                critic_loss = F.mse_loss(current_out[0], target_q)
+            else:
+                critic_loss = F.mse_loss(current_out, target_q)
 
     critic_optimizer.zero_grad()
     critic_loss.backward()
+    torch.nn.utils.clip_grad_norm_(critic.parameters(), grad_clip_norm)
     critic_optimizer.step()
 
     soft_update(target_critic, critic, tau=tau)
@@ -183,6 +226,7 @@ def train_actor_step(
     replay_buffer: Buffer,
     batch_size: int,
     tau: float = 0.005,
+    grad_clip_norm: float = 1.0,
 ) -> float:
     batch = replay_buffer.sample(batch_size=batch_size)
 
@@ -194,6 +238,7 @@ def train_actor_step(
 
     actor_optimizer.zero_grad()
     actor_loss.backward()
+    torch.nn.utils.clip_grad_norm_(actor.parameters(), grad_clip_norm)
     actor_optimizer.step()
 
     soft_update(target_actor, actor, tau=tau)
@@ -344,6 +389,7 @@ def td3_train_critics(
     noise_clip: float,
     action_limit: float,
     device: torch.device,
+    grad_clip_norm: float = 1.0,
 ) -> float:
     batch = replay_buffer.sample(batch_size)
     state = batch["state"].to(device)
@@ -371,6 +417,8 @@ def td3_train_critics(
     critic_1_optimizer.zero_grad()
     critic_2_optimizer.zero_grad()
     critic_loss.backward()
+    torch.nn.utils.clip_grad_norm_(critic_1.parameters(), grad_clip_norm)
+    torch.nn.utils.clip_grad_norm_(critic_2.parameters(), grad_clip_norm)
     critic_1_optimizer.step()
     critic_2_optimizer.step()
 
@@ -384,6 +432,7 @@ def td3_update_actor(
     replay_buffer: Buffer,
     batch_size: int,
     device: torch.device,
+    grad_clip_norm: float = 1.0,
 ) -> float:
     batch = replay_buffer.sample(batch_size)
     state = batch["state"].to(device)
@@ -392,6 +441,7 @@ def td3_update_actor(
 
     actor_optimizer.zero_grad()
     actor_loss.backward()
+    torch.nn.utils.clip_grad_norm_(actor.parameters(), grad_clip_norm)
     actor_optimizer.step()
 
     return actor_loss.item()

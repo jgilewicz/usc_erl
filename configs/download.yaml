@@ -1,0 +1,19 @@
+wandb:
+  entity: evo_rl
+  project: FINAL
+
+algorithms:
+  - sc_erl_dropout
+  - sc_erl_ensemble
+  - sc_erl_random
+  - td3
+  - erl
+  - ppo
+  - ddpg
+
+environments:
+  - FetchReach-v4
+  - FetchPush-v4
+  - FetchSlide-v4
+  - FetchPickAndPlace-v4
+

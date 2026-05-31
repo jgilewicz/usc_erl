@@ -65,7 +65,8 @@ def PPO(
     batch_size: int = 64,
     ppo_epochs: int = 10,
     device: torch.device = torch.device("cpu"),
-    hidden_dim: int = 64,
+    actor_hidden_dim: int = 64,
+    critic_hidden_dim: int = 64,
     gamma: float = 0.99,
     gae_lambda: float = 0.95,
     clip_param: float = 0.2,
@@ -76,7 +77,8 @@ def PPO(
     eval_interval: int = 5000,
     logger: WandbLogger | None = None,
     debug: bool = False,
-) -> None:
+    grad_clip_norm: float = 1.0,
+) -> float:
     
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
@@ -84,12 +86,12 @@ def PPO(
     actor = StochasticActor(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=actor_hidden_dim,
     ).to(device)
 
     critic = StateCritic(
         state_dim=state_dim,
-        hidden_dim=hidden_dim,
+        hidden_dim=critic_hidden_dim,
     ).to(device)
 
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=actor_lr, eps=1e-5)
@@ -100,6 +102,7 @@ def PPO(
     state, _ = env.reset()
     episode_reward = 0.0
     episode_rewards = []
+    eval_reward = 0.0
     
     total_steps = 0
     updates = 0
@@ -216,12 +219,12 @@ def PPO(
 
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
-                torch.nn.utils.clip_grad_norm_(actor.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(actor.parameters(), grad_clip_norm)
                 actor_optimizer.step()
 
                 critic_optimizer.zero_grad()
                 critic_loss.backward()
-                torch.nn.utils.clip_grad_norm_(critic.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(critic.parameters(), grad_clip_norm)
                 critic_optimizer.step()
                 
                 epoch_actor_loss += actor_loss.item()
@@ -245,3 +248,5 @@ def PPO(
                 },
                 step=total_steps,
             )
+
+    return float(eval_reward)

@@ -1,16 +1,14 @@
 defaults:
-  - algorithm: erl
-  - _self_
-
+- algorithm: erl
+- _self_
 seed: 0
 device: auto
 debug: false
-
+grad_clip_norm: 1.2320151279502325
 env:
-  id: Ant-v5
+  id: FetchReach-v4
 eval_env:
-  id: Ant-v5
-
+  id: FetchReach-v4
 wandb:
   enabled: true
   project: mujoco_surrogate_uncertainty_prediction_v2
