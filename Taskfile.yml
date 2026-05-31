@@ -96,3 +96,27 @@ tasks:
       - uv run python plots_and_tests/generate_report.py
       - uv run python plots_and_tests/generate_pdf.py
 
+
+  # ===========================================================================
+  # Laptop Pilot Run (Swimmer-v5, 5 seeds × 8 algos = 40 runs)
+  # RTX 3050 Ti 4GB VRAM → max -P 3 (GPU bottleneck!)
+  # ===========================================================================
+
+  run-laptop-pilot:
+    desc: "Pilot run: all 8 algorithms on Swimmer-v5, 5 seeds each (40 runs). Tuned for RTX 3050 Ti 4GB VRAM."
+    cmds:
+      - |
+        ENV="Swimmer-v5"
+        echo "=== Laptop Pilot: ${ENV} | 8 algos x 5 seeds = 40 runs | -P 3 (4GB VRAM) ==="
+        (
+          for seed in 0 1 2 3 4; do
+            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,sc_erl,dropout]\""
+            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_ensemble_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,sc_erl,ensemble]\""
+            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=evidential seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_evidential_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,sc_erl,evidential]\""
+            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_random_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,sc_erl,random]\""
+            echo "uv run python entry_point.py algorithm=td3 seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"td3_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,td3,baseline]\""
+            echo "uv run python entry_point.py algorithm=erl seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"erl_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,erl,baseline]\""
+            echo "uv run python entry_point.py algorithm=ddpg seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"ddpg_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,ddpg,baseline]\""
+            echo "uv run python entry_point.py algorithm=ppo seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"ppo_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,ppo,baseline]\""
+          done
+        ) | perl -MList::Util=shuffle -e 'print shuffle <STDIN>' | xargs -I {} -P 3 bash -c '{}'
