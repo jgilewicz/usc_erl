@@ -51,7 +51,7 @@ tasks:
   clean:
     desc: "Clean outputs, Hydra logs, training results, downloaded metrics, and compiled reports"
     cmds:
-      - rm -rf outputs .hydra results wandb *.pdf *.md
+      - rm -rf outputs .hydra results wandb *.pdf 
       - |
         for folder in eval_reward rl_reward best_population_fitness avg_population_fitness uncertainty_mean uncertainty_max uncertainty_threshold critic_loss total_steps generation summary; do
           rm -rf plots_and_tests/$folder
