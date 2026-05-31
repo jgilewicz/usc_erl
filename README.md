@@ -56,6 +56,3 @@ Practical tips
 
 Support and next steps
 - This repository is part of private research. I can help with experiment execution, tuning spaces, or preparing reproducibility scripts on request.
-
----
-If you want, I can also provide an English README with example cluster job scripts or generate a `requirements.txt` from the current environment.

@@ -155,20 +155,28 @@ class SurrogateController:
             return population, fitnesses, steps
 
         if self.surrogate_mode == SurrogateMode.RANDOM:
-            if self.rng.random() > self.omega:
-                fitnesses, steps = self._real_evaluation(
-                    population, env, evaluate_episodes
-                )
-                surrogate = False
-                self.mode = "real"
-            else:
-                fitnesses = surrogate_fitness(
-                    population, self.critic, self.replay_buffer, self.device, self.k
-                )
-                steps = 0
-                surrogate = True
-                self.mode = "surrogate"
+            surrogate_fitnesses = surrogate_fitness(
+                population, self.critic, self.replay_buffer, self.device, self.k
+            )
+            fitnesses = []
+            steps = 0
+            any_surrogate = False
 
+            for i, policy in enumerate(population):
+                if self.rng.random() > self.omega:
+                    fit, s = self._real_evaluation([policy], env, evaluate_episodes)
+                    fitnesses.append(fit[0])
+                    steps += s
+                else:
+                    fitnesses.append(surrogate_fitnesses[i])
+                    any_surrogate = True
+
+            surrogate = any_surrogate
+            self.mode = (
+                "mixed"
+                if any_surrogate and steps > 0
+                else ("surrogate" if any_surrogate else "real")
+            )
             self.last_fitness = fitnesses
 
         elif self.surrogate_mode == SurrogateMode.DROPOUT:

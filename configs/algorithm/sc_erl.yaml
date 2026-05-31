@@ -28,7 +28,7 @@ evolution:
 surrogate:
   enabled: true
   omega: 0.3
-  k: 5
+  k: 1000
   k_ensembles: 5
   mode: dropout  # options: random, dropout, ensemble, evidential
   beta: 1.5
