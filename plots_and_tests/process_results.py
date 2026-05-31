@@ -311,8 +311,8 @@ def generate_surrogate_analysis_plot(env_id, merged_data, out_path):
 
 def generate_summary_table(env_id, base_dir='results', out_base_dir=None):
     """
-    Compiles key statistics (mean and standard deviation) for true evaluation reward 
-    and best population fitness achieved by all algorithms.
+    Compiles key statistics (mean and standard deviation) for true evaluation reward,
+    best population fitness, average population fitness, training time [h], and average surrogate uncertainty.
     Exports the compiled data using modern Pandas 2.x styling mechanics to LaTeX table format.
     """
     summary_path = os.path.join(base_dir, 'summary', f'{env_id}.csv')
@@ -327,17 +327,40 @@ def generate_summary_table(env_id, base_dir='results', out_base_dir=None):
         match = re.match(pattern, name)
         if match:
             method = match.group(1)
+            if 'evidential' in method:
+                continue
             seed = int(match.group(2))
+            
+            # 1. Test Reward (RL)
             eval_reward = row.get('eval_reward', np.nan)
             rl_reward = row.get('rl_reward', np.nan)
+            test_reward = rl_reward if pd.notna(rl_reward) and not (isinstance(rl_reward, str) and rl_reward == '') else eval_reward
+            
+            # 2. Best Fitness
             best_pop = row.get('best_population_fitness', np.nan)
             
-            # Select valid metric fallback
+            # 3. Average Population Fitness
+            avg_pop = row.get('avg_population_fitness', np.nan)
+            
+            # 4. Training Time [h]
+            runtime_raw = row.get('Runtime', np.nan)
+            try:
+                runtime_val = float(runtime_raw) if pd.notna(runtime_raw) and runtime_raw != '' else np.nan
+            except ValueError:
+                runtime_val = np.nan
+            runtime_h = runtime_val / 3600.0 if pd.notna(runtime_val) else np.nan
+            
+            # 5. Avg Surrogate Uncertainty
+            avg_uncertainty = row.get('uncertainty_mean', np.nan)
+            
             parsed_rows.append({
-                'method': method, 
-                'seed': seed, 
-                'eval_reward': rl_reward if pd.notna(rl_reward) and not (isinstance(rl_reward, str) and rl_reward == '') else eval_reward, 
-                'best_population_fitness': best_pop
+                'method': method,
+                'seed': seed,
+                'test_reward': pd.to_numeric(test_reward, errors='coerce'),
+                'best_pop': pd.to_numeric(best_pop, errors='coerce'),
+                'avg_pop': pd.to_numeric(avg_pop, errors='coerce'),
+                'runtime_h': pd.to_numeric(runtime_h, errors='coerce'),
+                'avg_uncertainty': pd.to_numeric(avg_uncertainty, errors='coerce')
             })
             
     parsed_df = pd.DataFrame(parsed_rows)
@@ -345,9 +368,33 @@ def generate_summary_table(env_id, base_dir='results', out_base_dir=None):
         return
         
     # Group by method and calculate descriptive statistics
-    summary_stats = parsed_df.groupby('method').agg({'eval_reward': ['mean', 'std'], 'best_population_fitness': ['mean', 'std']})
+    summary_stats = parsed_df.groupby('method').agg({
+        'test_reward': ['mean', 'std'],
+        'best_pop': ['mean', 'std'],
+        'avg_pop': ['mean', 'std'],
+        'runtime_h': ['mean', 'std'],
+        'avg_uncertainty': ['mean', 'std']
+    })
     summary_stats.columns = [f'{col[0]}_{col[1]}' for col in summary_stats.columns]
     summary_stats = summary_stats.reset_index()
+    
+    # Format helper
+    def fmt(mean, std):
+        if pd.isna(mean):
+            return "-"
+        if pd.isna(std):
+            return f"${mean:.2f} \\pm 0.00$"
+        return f"${mean:.2f} \\pm {std:.2f}$"
+        
+    polish_labels = {
+        'ppo': 'PPO (Baseline)',
+        'td3': 'TD3 (Baseline)',
+        'ddpg': 'DDPG (Baseline)',
+        'erl': 'ERL (Bez surogata)',
+        'sc_erl_random': 'SC-ERL (Random)',
+        'sc_erl_ensemble': 'SC-ERL (Ensemble)',
+        'sc_erl_dropout': 'SC-ERL (Dropout)'
+    }
     
     csv_rows = []
     method_order = ['ppo', 'td3', 'ddpg', 'erl', 'sc_erl_random', 'sc_erl_ensemble', 'sc_erl_dropout']
@@ -356,13 +403,15 @@ def generate_summary_table(env_id, base_dir='results', out_base_dir=None):
         if row_data.empty:
             continue
         row_data = row_data.iloc[0]
-        label = METHOD_LABELS.get(method, method)
+        label = polish_labels.get(method, method)
+        
         csv_rows.append({
-            'Algorithm/Method': label, 
-            'Eval_Reward_Mean': row_data['eval_reward_mean'], 
-            'Eval_Reward_Std': row_data['eval_reward_std'], 
-            'Best_Pop_Fitness_Mean': row_data['best_population_fitness_mean'], 
-            'Best_Pop_Fitness_Std': row_data['best_population_fitness_std']
+            'Architektura': label,
+            'Nagroda testowa (RL)': fmt(row_data['test_reward_mean'], row_data['test_reward_std']),
+            'Najlepsze przystosowanie': fmt(row_data['best_pop_mean'], row_data['best_pop_std']),
+            'Średnie przystosowanie populacji': fmt(row_data['avg_pop_mean'], row_data['avg_pop_std']),
+            'Czas treningu [h]': fmt(row_data['runtime_h_mean'], row_data['runtime_h_std']),
+            'Średnia niepewność surogata': fmt(row_data['avg_uncertainty_mean'], row_data['avg_uncertainty_std'])
         })
         
     csv_table = pd.DataFrame(csv_rows)
@@ -371,11 +420,12 @@ def generate_summary_table(env_id, base_dir='results', out_base_dir=None):
     latex_out = os.path.join(out_dir, f'{env_id}_summary_table.tex')
     
     with open(latex_out, 'w') as f:
-        # Avoid direct to_latex deprecation warning by utilizing pandas styler API
-        f.write(csv_table.style.hide(axis="index").to_latex(
-            column_format='lcccc', 
-            caption=f'Evaluation rewards and best population fitness across different methods on {env_id}.', 
-            label=f'tab:summary_{env_id}'
+        f.write(csv_table.to_latex(
+            index=False,
+            column_format='lccccc', 
+            caption=f'Nagrody ewaluacyjne, przystosowanie populacji, czas obliczeń oraz niepewność surogata dla środowiska {env_id}.', 
+            label=f'tab:summary_{env_id}',
+            escape=False
         ))
 
 def generate_critic_correlation_plot(env_id, base_dir='results', out_base_dir=None):

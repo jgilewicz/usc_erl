@@ -12,8 +12,10 @@ algorithms:
   - ddpg
 
 environments:
-  - FetchReach-v4
-  - FetchPush-v4
-  - FetchSlide-v4
-  - FetchPickAndPlace-v4
-
+  # - FetchReach-v4
+  # - FetchPush-v4
+  # - FetchSlide-v4
+  # - FetchPickAndPlace-v4
+  - HalfCheetah-v5
+  - Hopper-v5
+  - Swimmer-v5

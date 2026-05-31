@@ -30,9 +30,9 @@ surrogate:
   omega: 0.3
   k: 5
   k_ensembles: 5
-  mode: ensemble  # options: random, dropout, ensemble, evidential
-  beta: 1.0
-  dropout_p: 0.2
+  mode: dropout  # options: random, dropout, ensemble, evidential
+  beta: 1.5
+  dropout_p: 0.05
   mc_samples: 20
   min_uncertainty_floor: 0.01
   percentile: 75

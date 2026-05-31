@@ -4,14 +4,14 @@ defaults:
 seed: 0
 device: auto
 debug: false
-grad_clip_norm: 1.2320151279502325
+grad_clip_norm: 1.0
 env:
-  id: FetchReach-v4
+  id: FetchPush-v4
 eval_env:
-  id: FetchReach-v4
+  id: FetchPush-v4
 wandb:
   enabled: true
-  project: mujoco_surrogate_uncertainty_prediction_v2
-  entity: evo_rl
+  project: evo_rl
+  entity: new_tests
   name: null
   tags: []

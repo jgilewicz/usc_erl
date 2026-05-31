@@ -101,7 +101,9 @@ def ERL(
     )
 
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=actor_lr)
-    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
+    critic_optimizer = torch.optim.Adam(
+        critic.parameters(), lr=critic_lr, weight_decay=1e-4
+    )
 
     evolution_module = EvolutionModule(
         obs_size=state_dim,

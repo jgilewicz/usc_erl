@@ -180,6 +180,9 @@ def train_critic_step(
             critic_loss += F.mse_loss(current_q_i, target_q_i)
 
     else:
+        target_actor.eval()
+        target_critic.eval()
+
         batch = replay_buffer.sample(batch_size=batch_size)
 
         with torch.no_grad():
@@ -194,6 +197,9 @@ def train_critic_step(
 
             target_q = batch["reward"] + (1.0 - batch["done"]) * gamma * next_q
 
+        target_actor.train()
+        target_critic.train()
+
         if hasattr(critic, "compute_loss"):
             critic_loss = critic.compute_loss(batch["state"], batch["action"], target_q)
         else:
@@ -204,9 +210,9 @@ def train_critic_step(
                 critic_loss = evidential_loss(target_q, mu, v, alpha, beta, lam=lam)
 
             elif isinstance(current_out, tuple):
-                critic_loss = F.mse_loss(current_out[0], target_q)
+                critic_loss = F.smooth_l1_loss(current_out[0], target_q)
             else:
-                critic_loss = F.mse_loss(current_out, target_q)
+                critic_loss = F.smooth_l1_loss(current_out, target_q)
 
     critic_optimizer.zero_grad()
     critic_loss.backward()
