@@ -37,36 +37,6 @@ tasks:
       - |
         for env in HalfCheetah-v5 Hopper-v5 Walker2d-v5 Ant-v5 Swimmer-v5; do
 
-  smoke-test:
-    desc: "Run a quick smoke test for all algorithms on Ant-v5 with seed 42"
-    cmds:
-      - |
-        echo "=== Running PPO smoke test ==="
-        uv run python entry_point.py algorithm=ppo env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 wandb.enabled=false
-      - |
-        echo "=== Running TD3 smoke test ==="
-        uv run python entry_point.py algorithm=td3 env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 wandb.enabled=false
-      - |
-        echo "=== Running DDPG smoke test ==="
-        uv run python entry_point.py algorithm=ddpg env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 wandb.enabled=false
-      - |
-        echo "=== Running ERL smoke test ==="
-        uv run python entry_point.py algorithm=erl env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 evolution.population_size=4 warmup.warmup_steps=1000 buffer_size=20000 wandb.enabled=false
-      - |
-        echo "=== Running SC-ERL Random smoke test ==="
-        uv run python entry_point.py algorithm=sc_erl surrogate.mode=random env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 evolution.population_size=4 warmup.warmup_steps=1000 buffer_size=20000 wandb.enabled=false
-      - |
-        echo "=== Running SC-ERL Dropout smoke test ==="
-        uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 evolution.population_size=4 warmup.warmup_steps=1000 buffer_size=20000 wandb.enabled=false
-      - |
-        echo "=== Running SC-ERL Ensemble smoke test ==="
-        uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 evolution.population_size=4 warmup.warmup_steps=1000 buffer_size=20000 wandb.enabled=false
-      - |
-        echo "=== Running SC-ERL Evidential smoke test ==="
-        uv run python entry_point.py algorithm=sc_erl surrogate.mode=evidential env.id=Ant-v5 eval_env.id=Ant-v5 seed=42 n_steps=20000 evolution.population_size=4 warmup.warmup_steps=1000 buffer_size=20000 wandb.enabled=false
-
-
-
   clean:
     desc: "Clean outputs, Hydra logs, training results, downloaded metrics, and compiled reports"
     cmds:
@@ -79,10 +49,7 @@ tasks:
   report:
     desc: "Generate all plots, statistical tables, Markdown and PDF reports (full pipeline)"
     cmds:
-      - uv run python plots_and_tests/process_results.py
-      - uv run python plots_and_tests/statistical_tests.py
-      - uv run python plots_and_tests/generate_report.py
-      - uv run python plots_and_tests/generate_pdf.py
+      - uv run python plots_and_tests/generate_results.py
 
 
   # ===========================================================================
@@ -91,10 +58,10 @@ tasks:
   # ===========================================================================
 
   run-pilot:
-    desc: "Pilot run: all 8 algorithms on Swimmer-v5, 5 seeds each (40 runs). Tuned for RTX 3050 Ti 4GB VRAM."
+    desc: "Pilot run: all 8 algorithms on Hopper-v5, 5 seeds each (40 runs). Tuned for RTX 3050 Ti 4GB VRAM."
     cmds:
       - |
-        ENV="Swimmer-v5"
+        ENV="Hopper-v5"
         echo "=== Laptop Pilot: ${ENV} | 8 algos x 5 seeds = 40 runs | -P 3 (4GB VRAM) ==="
         (
           for seed in 0 1 2 3 4; do
@@ -107,4 +74,4 @@ tasks:
             echo "uv run python entry_point.py algorithm=ddpg seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"ddpg_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,ddpg,baseline]\""
             echo "uv run python entry_point.py algorithm=ppo seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"ppo_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,ppo,baseline]\""
           done
-        ) | perl -MList::Util=shuffle -e 'print shuffle <STDIN>' | xargs -I {} -P 8 bash -c '{}'
+        ) | perl -MList::Util=shuffle -e 'print shuffle <STDIN>' | xargs -I {} -P 4 bash -c '{}'

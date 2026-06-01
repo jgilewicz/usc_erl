@@ -1,8 +1,9 @@
 wandb:
   entity: evo_rl
-  project: FINAL
+  project: PHOENIX
 
 algorithms:
+  - sc_erl_evidential
   - sc_erl_dropout
   - sc_erl_ensemble
   - sc_erl_random
