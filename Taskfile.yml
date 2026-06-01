@@ -36,17 +36,16 @@ tasks:
     cmds:
       - |
         for env in HalfCheetah-v5 Hopper-v5 Walker2d-v5 Ant-v5 Swimmer-v5; do
-          for seed in 0 1 2 3 4; do
-            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=dropout seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_dropout_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,sc_erl,dropout]\""
-            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=ensemble seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_ensemble_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,sc_erl,ensemble]\""
-            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=evidential seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_evidential_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,sc_erl,evidential]\""
-            echo "uv run python entry_point.py algorithm=td3 seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"td3_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,td3,baseline]\""
-            echo "uv run python entry_point.py algorithm=erl seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"erl_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,erl,baseline]\""
-            echo "uv run python entry_point.py algorithm=ppo seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"ppo_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,ppo,baseline]\""
-            echo "uv run python entry_point.py algorithm=sc_erl surrogate.mode=random seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"sc_erl_random_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,sc_erl,random]\""
-            echo "uv run python entry_point.py algorithm=ddpg seed=$seed env.id=$env eval_env.id=$env n_steps=1000000 wandb.enabled=true wandb.name=\"ddpg_${env}_seed${seed}\" wandb.tags=\"[MuJoCo,ddpg,baseline]\""
-          done
-        done | perl -MList::Util=shuffle -e 'print shuffle <STDIN>' | xargs -I {} -P 24 bash -c '{}'
+Dobra wiadomość i zła wiadomość:
+
+**✅ Dobra**: `best_population_fitness` osiąga 260-300 — to jest na poziomie papierowym! Ewolucja działa poprawnie.
+
+**❌ Zła**: `eval_reward` (to co widzisz jako "nagroda") ewaluuje **agenta RL (DDPG)**, a NIE najlepszego osobnika z populacji. Na Swimmerze DDPG zawsze jest słaby (Swimmer Paradox — Sekcja 5.3 artykułu). To jest **błąd metryki, nie treningu**.
+
+Poprawiam — ewaluacja powinna dotyczyć najlepszego osobnika z populacji:
+
+Viewed erl.py:130-246
+Viewed sc_erl.py:190-345
 
 
   smoke-test:
@@ -102,7 +101,7 @@ tasks:
   # RTX 3050 Ti 4GB VRAM → max -P 3 (GPU bottleneck!)
   # ===========================================================================
 
-  run-laptop-pilot:
+  run-pilot:
     desc: "Pilot run: all 8 algorithms on Swimmer-v5, 5 seeds each (40 runs). Tuned for RTX 3050 Ti 4GB VRAM."
     cmds:
       - |
@@ -119,4 +118,4 @@ tasks:
             echo "uv run python entry_point.py algorithm=ddpg seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"ddpg_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,ddpg,baseline]\""
             echo "uv run python entry_point.py algorithm=ppo seed=$seed env.id=${ENV} eval_env.id=${ENV} n_steps=1000000 wandb.enabled=true wandb.name=\"ppo_${ENV}_seed${seed}\" wandb.tags=\"[Pilot,ppo,baseline]\""
           done
-        ) | perl -MList::Util=shuffle -e 'print shuffle <STDIN>' | xargs -I {} -P 3 bash -c '{}'
+        ) | perl -MList::Util=shuffle -e 'print shuffle <STDIN>' | xargs -I {} -P 8 bash -c '{}'

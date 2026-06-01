@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from modules.ensemble_module import EnsembleModule
-from common.evolution_module import EvolutionModule
+from modules.evolution_module import EvolutionModule
 from modules.deep_modules import Actor, Critic, EvidentialCritic
 from common.reply_buffer import Buffer
 from common.surrogate_controller import SurrogateController, SurrogateMode
@@ -37,6 +37,10 @@ def SC_ERL(
     mutation_prob: float = 0.1,
     elite_ratio: float = 0.2,
     rl_injection_interval: int = 10,
+    crossover_prob: float = 0.5,
+    crossover_mode: str = "distillation",
+    frac_frames_train: float = 1.0,
+    eval_trials: int = 1,
     warmup_steps: int = 1000,
     actor_lr: float = 1e-3,
     critic_lr: float = 1e-3,
@@ -56,6 +60,7 @@ def SC_ERL(
     epsilon: float = 0.10,
     percentile: int = 75,
     lam: float = 0.1,
+    mutation_fraction: float = 0.1,
 ) -> float:
 
     state_dim = env.observation_space.shape[0]
@@ -68,6 +73,7 @@ def SC_ERL(
             action_dim=action_dim,
             hidden_dim=actor_hidden_dim,
             action_limit=action_limit,
+            activation="tanh",
         ).to(device)
         for _ in range(population_size)
     ]
@@ -77,6 +83,7 @@ def SC_ERL(
         action_dim=action_dim,
         hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
+        activation="tanh",
     ).to(device)
 
     target_actor = Actor(
@@ -84,6 +91,7 @@ def SC_ERL(
         action_dim=action_dim,
         hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
+        activation="tanh",
     ).to(device)
 
     target_actor.load_state_dict(actor.state_dict())
@@ -93,6 +101,7 @@ def SC_ERL(
         action_dim=action_dim,
         hidden_dim=critic_hidden_dim,
         dropout=0.0,
+        activation="elu",
     ).to(device)
 
     target_critic = Critic(
@@ -100,6 +109,7 @@ def SC_ERL(
         action_dim=action_dim,
         hidden_dim=critic_hidden_dim,
         dropout=0.0,
+        activation="elu",
     ).to(device)
 
     target_critic.load_state_dict(critic.state_dict())
@@ -170,6 +180,8 @@ def SC_ERL(
         min_uncertainty_floor=min_uncertainty_floor,
         epsilon=epsilon,
         percentile=percentile,
+        crossover_prob=crossover_prob,
+        crossover_mode=crossover_mode,
     )
 
     total_steps = warmup(env, replay_buffer, warmup_steps=warmup_steps)
@@ -184,12 +196,13 @@ def SC_ERL(
             surrogate_controller.generation_based_control(
                 population=population,
                 env=env,
-                evaluate_episodes=1,
+                evaluate_episodes=eval_trials,
                 mutation_std=mutation_std,
                 mutation_prob=mutation_prob,
                 elite_ratio=elite_ratio,
                 total_steps=total_steps,
                 warmup_steps=warmup_steps,
+                mutation_fraction=mutation_fraction,
             )
         )
 
@@ -197,6 +210,21 @@ def SC_ERL(
 
         for fitness in fitnesses:
             recent_rewards.append(fitness)
+
+        best_population_index = int(np.argmax(fitnesses)) if fitnesses else 0
+        best_population_member = (
+            population[best_population_index] if fitnesses else actor
+        )
+
+        eval_reward = evaluate_policy(
+            policy=best_population_member,
+            env=eval_env,
+            device=device,
+            episodes=5,
+            noise_std=0.0,
+        )
+
+        recent_rewards.append(eval_reward)
 
         _, rl_steps = rollout_policy(
             policy=actor,
@@ -208,20 +236,16 @@ def SC_ERL(
         )
         total_steps += rl_steps
 
-        eval_reward = evaluate_policy(
-            policy=actor,
-            env=eval_env,
-            device=device,
-            episodes=5,
-            noise_std=0.0,
-        )
-
-        recent_rewards.append(eval_reward)
-
         critic_loss = 0.0
         actor_loss = 0.0
         if len(replay_buffer) >= batch_size:
-            for _ in range(gradient_steps):
+            generation_steps = evo_steps + rl_steps
+            num_updates = (
+                int(rl_steps * frac_frames_train)
+                if frac_frames_train > 0.0
+                else gradient_steps
+            )
+            for _ in range(num_updates):
                 critic_loss = train_critic_step(
                     target_actor=target_actor,
                     critic=critic,
@@ -232,7 +256,6 @@ def SC_ERL(
                     gamma=gamma,
                     tau=tau,
                     grad_clip_norm=grad_clip_norm,
-                    lam=lam,
                 )
 
                 actor_loss = train_actor_step(
@@ -268,19 +291,31 @@ def SC_ERL(
                     uncertainty_mean=(
                         surrogate_controller.last_uncertainty_mean
                         if surrogate_mode
-                        in (SurrogateMode.DROPOUT, SurrogateMode.ENSEMBLE, SurrogateMode.EVIDENTIAL)
+                        in (
+                            SurrogateMode.DROPOUT,
+                            SurrogateMode.ENSEMBLE,
+                            SurrogateMode.EVIDENTIAL,
+                        )
                         else None
                     ),
                     uncertainty_max=(
                         surrogate_controller.last_uncertainty_max
                         if surrogate_mode
-                        in (SurrogateMode.DROPOUT, SurrogateMode.ENSEMBLE, SurrogateMode.EVIDENTIAL)
+                        in (
+                            SurrogateMode.DROPOUT,
+                            SurrogateMode.ENSEMBLE,
+                            SurrogateMode.EVIDENTIAL,
+                        )
                         else None
                     ),
                     uncertainty_threshold=(
                         surrogate_controller.last_uncertainty_threshold
                         if surrogate_mode
-                        in (SurrogateMode.DROPOUT, SurrogateMode.ENSEMBLE, SurrogateMode.EVIDENTIAL)
+                        in (
+                            SurrogateMode.DROPOUT,
+                            SurrogateMode.ENSEMBLE,
+                            SurrogateMode.EVIDENTIAL,
+                        )
                         else None
                     ),
                     surrogate_mode=surrogate_mode.name.lower(),

@@ -1,9 +1,9 @@
 # @package _global_
 name: sc_erl
 
-buffer_size: 200_000
-n_steps: 1_000_000
-batch_size: 256
+buffer_size: 1000000
+n_steps: 1000000
+batch_size: 128
 
 network:
   actor_hidden_dim: 256
@@ -12,33 +12,36 @@ network:
 rl:
   gamma: 0.99
   tau: 0.005
-  actor_lr: 3e-4
-  critic_lr: 3e-4
+  actor_lr: 5e-5
+  critic_lr: 5e-4
   exploration_noise_std: 0.1
   gradient_steps: 1000
+  frac_frames_train: 1.0
 
 evolution:
   population_size: 10
-  mutation_std: 0.1      
-  mutation_prob: 0.9    
-  elite_ratio: 0.2       
-  rl_injection_interval: 1 
-
+  mutation_std: 0.1
+  mutation_prob: 0.9
+  mutation_fraction: 0.1
+  elite_ratio: 0.1
+  rl_injection_interval: 10
+  crossover_prob: 0.5
+  crossover_mode: distillation  # Options: parameter, distillation, none
+  eval_trials: 1
 
 surrogate:
   enabled: true
-  omega: 0.3
-  k: 1000
+  omega: 0.6
+  k: 8000
   k_ensembles: 5
-  mode: dropout  # options: random, dropout, ensemble, evidential
+  mode: dropout  # Options: random, dropout, ensemble, evidential
   beta: 1.0
-  dropout_p: 1
+  dropout_p: 0.1
   mc_samples: 20
   min_uncertainty_floor: 0.01
   percentile: 75
   epsilon: 0.10
   lam: 0.1
 
-
 warmup:
-  warmup_steps: 10_000
+  warmup_steps: 10000

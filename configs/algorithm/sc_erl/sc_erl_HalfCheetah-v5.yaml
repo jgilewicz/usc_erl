@@ -1,0 +1,5 @@
+# @package _global_
+evolution:
+  elite_ratio: 0.1
+  rl_injection_interval: 10
+  eval_trials: 1

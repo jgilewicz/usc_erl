@@ -5,7 +5,7 @@ from collections import deque
 
 from modules.deep_modules import Actor, Critic
 from common.reply_buffer import Buffer
-from common.evolution_module import EvolutionModule
+from modules.evolution_module import EvolutionModule
 from common.wandb_logger import WandbLogger
 from common.utils import (
     train_critic_step,
@@ -34,6 +34,10 @@ def ERL(
     mutation_prob: float = 0.1,
     elite_ratio: float = 0.2,
     rl_injection_interval: int = 10,
+    crossover_prob: float = 0.5,
+    crossover_mode: str = "parameter",
+    frac_frames_train: float = 1.0,
+    eval_trials: int = 1,
     warmup_steps: int = 1000,
     actor_lr: float = 1e-3,
     critic_lr: float = 1e-3,
@@ -43,6 +47,7 @@ def ERL(
     logger: WandbLogger | None = None,
     debug: bool = False,
     grad_clip_norm: float = 1.0,
+    mutation_fraction: float = 0.1,
 ) -> float:
 
     state_dim = env.observation_space.shape[0]
@@ -55,6 +60,7 @@ def ERL(
             action_dim=action_dim,
             hidden_dim=actor_hidden_dim,
             action_limit=action_limit,
+            activation="tanh",
         ).to(device)
         for _ in range(population_size)
     ]
@@ -64,6 +70,7 @@ def ERL(
         action_dim=action_dim,
         hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
+        activation="tanh",
     ).to(device)
 
     target_actor = Actor(
@@ -71,6 +78,7 @@ def ERL(
         action_dim=action_dim,
         hidden_dim=actor_hidden_dim,
         action_limit=action_limit,
+        activation="tanh",
     ).to(device)
 
     target_actor.load_state_dict(actor.state_dict())
@@ -80,6 +88,7 @@ def ERL(
         action_dim=action_dim,
         hidden_dim=critic_hidden_dim,
         dropout=0.0,
+        activation="elu",
     ).to(device)
 
     target_critic = Critic(
@@ -87,6 +96,7 @@ def ERL(
         action_dim=action_dim,
         hidden_dim=critic_hidden_dim,
         dropout=0.0,
+        activation="elu",
     ).to(device)
 
     target_critic.load_state_dict(critic.state_dict())
@@ -131,7 +141,7 @@ def ERL(
                 env=env,
                 device=device,
                 replay_buffer=replay_buffer,
-                episodes=1,  # ξ=1 per ERL paper Table 2 — one trial per individual
+                episodes=eval_trials,
                 noise_std=0.0,
             )
 
@@ -140,8 +150,20 @@ def ERL(
             generation_steps += steps
             recent_rewards.append(fitness)
 
-            if total_steps >= n_steps:
-                break
+        best_population_index = int(np.argmax(fitnesses)) if fitnesses else 0
+        best_population_member = (
+            population[best_population_index] if fitnesses else actor
+        )
+
+        eval_reward = evaluate_policy(
+            policy=best_population_member,
+            env=eval_env,
+            device=device,
+            episodes=evaluate_episodes,
+            noise_std=0.0,
+        )
+
+        recent_rewards.append(eval_reward)
 
         population = evolution_module.evolve(
             population=population,
@@ -149,7 +171,10 @@ def ERL(
             mutation_std=mutation_std,
             mutation_prob=mutation_prob,
             elite_ratio=elite_ratio,
-            surrogate_evaluation=False,
+            crossover_prob=crossover_prob,
+            crossover_mode=crossover_mode,
+            replay_buffer=replay_buffer,
+            mutation_fraction=mutation_fraction,
         )
 
         _, rl_steps = rollout_policy(
@@ -162,18 +187,13 @@ def ERL(
         )
         total_steps += rl_steps
 
-        eval_reward = evaluate_policy(
-            policy=actor,
-            env=eval_env,
-            device=device,
-            episodes=evaluate_episodes,
-            noise_std=0.0,
-        )
-
-        recent_rewards.append(eval_reward)
-
         if len(replay_buffer) >= batch_size:
-            for _ in range(gradient_steps):
+            num_updates = (
+                int(rl_steps * frac_frames_train)
+                if frac_frames_train > 0.0
+                else gradient_steps
+            )
+            for _ in range(num_updates):
                 critic_loss = train_critic_step(
                     target_actor=target_actor,
                     critic=critic,

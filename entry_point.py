@@ -134,6 +134,10 @@ def main(cfg: DictConfig) -> None:
             mutation_prob=cfg.evolution.mutation_prob,
             elite_ratio=cfg.evolution.elite_ratio,
             rl_injection_interval=cfg.evolution.rl_injection_interval,
+            crossover_prob=cfg.evolution.crossover_prob,
+            crossover_mode=cfg.evolution.crossover_mode,
+            frac_frames_train=cfg.rl.frac_frames_train,
+            eval_trials=cfg.evolution.eval_trials,
             warmup_steps=cfg.warmup.warmup_steps,
             actor_lr=cfg.rl.actor_lr,
             critic_lr=cfg.rl.critic_lr,
@@ -143,6 +147,7 @@ def main(cfg: DictConfig) -> None:
             logger=logger,
             debug=cfg.debug,
             grad_clip_norm=cfg.grad_clip_norm,
+            mutation_fraction=cfg.evolution.mutation_fraction,
         )
     elif cfg.name == "td3":
         TD3(
@@ -211,6 +216,10 @@ def main(cfg: DictConfig) -> None:
             mutation_prob=cfg.evolution.mutation_prob,
             elite_ratio=cfg.evolution.elite_ratio,
             rl_injection_interval=cfg.evolution.rl_injection_interval,
+            crossover_prob=cfg.evolution.crossover_prob,
+            crossover_mode=cfg.evolution.crossover_mode,
+            frac_frames_train=cfg.rl.frac_frames_train,
+            eval_trials=cfg.evolution.eval_trials,
             warmup_steps=cfg.warmup.warmup_steps,
             actor_lr=cfg.rl.actor_lr,
             critic_lr=cfg.rl.critic_lr,
@@ -227,6 +236,7 @@ def main(cfg: DictConfig) -> None:
             dropout_p=cfg.surrogate.dropout_p,
             mc_samples=cfg.surrogate.mc_samples,
             min_uncertainty_floor=cfg.surrogate.min_uncertainty_floor,
+            mutation_fraction=cfg.evolution.mutation_fraction,
         )
     elif cfg.name == "ppo":
         PPO(

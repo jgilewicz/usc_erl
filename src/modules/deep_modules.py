@@ -10,15 +10,17 @@ class Actor(nn.Module):
         action_dim: int,
         hidden_dim: int,
         action_limit: float = 1.0,
+        activation: str = "relu",
     ):
         super(Actor, self).__init__()
 
         self.action_limit = action_limit
+        act_layer = nn.Tanh() if activation.lower() == "tanh" else nn.ReLU()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
-            nn.ReLU(),
+            act_layer,
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            act_layer,
         )
         self.out_layer = nn.Linear(hidden_dim, action_dim)
 
@@ -32,26 +34,35 @@ class Actor(nn.Module):
 
 class Critic(nn.Module):
     def __init__(
-        self, state_dim: int, action_dim: int, hidden_dim: int, dropout: float = 0.0
+        self,
+        state_dim: int,
+        action_dim: int,
+        hidden_dim: int = 256,
+        dropout: float = 0.0,
+        activation: str = "relu",
+        hidden_dims: list[int] = [400, 300],
     ) -> None:
         super(Critic, self).__init__()
 
+        act_layer = nn.ELU() if activation.lower() == "elu" else nn.ReLU()
+        dim1, dim2 = hidden_dims[0], hidden_dims[1]
+
         self.state_net = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
+            nn.Linear(state_dim, dim1),
+            nn.LayerNorm(dim1),
+            act_layer,
         )
 
         self.net = nn.Sequential(
-            nn.Linear(hidden_dim + action_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
+            nn.Linear(dim1 + action_dim, dim2),
+            nn.LayerNorm(dim2),
+            act_layer,
             nn.Dropout(p=dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
+            nn.Linear(dim2, dim2),
+            nn.LayerNorm(dim2),
+            act_layer,
             nn.Dropout(p=dropout),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(dim2, 1),
         )
 
     def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
@@ -137,22 +148,29 @@ class EvidentialModule(nn.Module):
 
 
 class EvidentialCritic(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int, hidden_dim: int) -> None:
+    def __init__(
+        self,
+        state_dim: int,
+        action_dim: int,
+        hidden_dim: int = 256,
+        hidden_dims: list[int] = [400, 300],
+    ) -> None:
         super(EvidentialCritic, self).__init__()
+        dim1, dim2 = hidden_dims[0], hidden_dims[1]
 
         self.state_net = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
+            nn.Linear(state_dim, dim1),
             nn.ReLU(),
         )
 
         self.net = nn.Sequential(
-            nn.Linear(hidden_dim + action_dim, hidden_dim),
+            nn.Linear(dim1 + action_dim, dim2),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(dim2, dim2),
             nn.ReLU(),
         )
 
-        self.evidential_output = EvidentialModule(in_features=hidden_dim, units=1)
+        self.evidential_output = EvidentialModule(in_features=dim2, units=1)
 
     def forward(self, state: torch.Tensor, action: torch.Tensor):
         state_features = self.state_net(state)

@@ -58,7 +58,7 @@ def print_erl_debug_summary(
         f"recent avg reward: {avg_reward:8.2f}"
     )
     print(
-        f"  RL policy       reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
+        f"  Best pop reward  reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
         f"critic loss: {critic_loss:8.4f}"
     )
     print()
@@ -85,7 +85,7 @@ def print_sc_erl_debug_summary(
         f"recent avg reward: {avg_reward:8.2f}"
     )
     print(
-        f"  RL policy       reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
+        f"  Best pop reward  reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
         f"critic loss: {critic_loss:8.4f}"
     )
     print(f"  Evolution       steps: {format_steps(evo_steps)}")
@@ -109,7 +109,7 @@ def get_flat_params(module: nn.Module) -> torch.Tensor:
         if isinstance(m, (nn.LayerNorm, nn.BatchNorm1d, nn.BatchNorm2d)):
             for p in m.parameters():
                 excluded_params.add(p)
-                
+
     for p in module.parameters():
         if p not in excluded_params:
             params.append(p.detach().view(-1))
@@ -126,7 +126,7 @@ def set_flat_params(
         if isinstance(m, (nn.LayerNorm, nn.BatchNorm1d, nn.BatchNorm2d)):
             for p in m.parameters():
                 excluded_params.add(p)
-                
+
     for param in module.parameters():
         if param not in excluded_params:
             elements = param.numel()

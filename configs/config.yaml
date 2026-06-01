@@ -4,11 +4,11 @@ defaults:
 seed: 0
 device: auto
 debug: false
-grad_clip_norm: 1.0
+grad_clip_norm: 10.0
 env:
-  id: HalfCheetah-v5
+  id: Swimmer-v5
 eval_env:
-  id: HalfCheetah-v5
+  id: Swimmer-v5
 wandb:
   enabled: true
   project: PHOENIX

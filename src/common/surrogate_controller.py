@@ -46,6 +46,8 @@ class SurrogateController:
         min_uncertainty_floor: float = 0.01,
         epsilon: float = 0.10,
         percentile: int = 75,
+        crossover_prob: float = 0.0,
+        crossover_mode: str = "none",
     ):
         self.evolution_module = evolution_module
         self.critic = critic
@@ -61,6 +63,8 @@ class SurrogateController:
         self.min_uncertainty_floor = min_uncertainty_floor
         self.epsilon = epsilon
         self.percentile = percentile
+        self.crossover_prob = crossover_prob
+        self.crossover_mode = crossover_mode
         self.last_fitness = []
         self.last_uncertainty = []
         self.last_uncertainty_mean = 0.0
@@ -85,6 +89,7 @@ class SurrogateController:
         elite_ratio: float = 0.2,
         total_steps: int = 0,
         warmup_steps: int = 0,
+        mutation_fraction: float = 0.1,
     ) -> tuple[list[nn.Module], list[float], int]:
         self.last_uncertainty = []
 
@@ -151,7 +156,10 @@ class SurrogateController:
                 mutation_std=mutation_std,
                 mutation_prob=mutation_prob,
                 elite_ratio=elite_ratio,
-                surrogate_evaluation=False,
+                crossover_prob=self.crossover_prob,
+                crossover_mode=self.crossover_mode,
+                replay_buffer=self.replay_buffer,
+                mutation_fraction=mutation_fraction,
             )
             return population, fitnesses, steps
 
@@ -335,13 +343,16 @@ class SurrogateController:
             mutation_std=mutation_std,
             mutation_prob=mutation_prob,
             elite_ratio=elite_ratio,
-            surrogate_evaluation=surrogate,
+            crossover_prob=self.crossover_prob,
+            crossover_mode=self.crossover_mode,
+            replay_buffer=self.replay_buffer,
+            mutation_fraction=mutation_fraction,
         )
 
         return population, fitnesses, steps
 
     def _real_evaluation(
-        self, population, env, evaluate_episodes, store_in_buffer: bool = False
+        self, population, env, evaluate_episodes, store_in_buffer: bool = True
     ):
         fitnesses = []
         total_steps = 0
