@@ -1,7 +1,6 @@
 import os
 import re
 import pandas as pd
-import numpy as np
 import wandb
 from omegaconf import OmegaConf
 
@@ -33,6 +32,7 @@ def determine_method_from_run(run):
         return name.lower()
     run_name = run.name
     for prefix in [
+        "sc_erl_evidential",
         "sc_erl_dropout",
         "sc_erl_ensemble",
         "sc_erl_random",
@@ -51,6 +51,8 @@ def determine_method_from_run(run):
             return "sc_erl_ensemble"
         if "random" in tags:
             return "sc_erl_random"
+        if "sc_erl_evidential" in tags:
+            return "sc_erl_evidential"
         return "sc_erl_random"
     for baseline in ["td3", "erl", "ppo", "ddpg"]:
         if baseline in tags:
@@ -69,7 +71,7 @@ def determine_env_and_seed(run):
     run_name = run.name
     if not env_id or seed is None:
         match = re.match(
-            "^(?:sc_erl_dropout|sc_erl_ensemble|sc_erl_random|td3|erl|ppo|ddpg)_([A-Za-z0-9\\-_]+)_seed(\\d+)",
+            "^(?:sc_erl_evidential|sc_erl_dropout|sc_erl_ensemble|sc_erl_random|td3|erl|ppo|ddpg)_([A-Za-z0-9\\-_]+)_seed(\\d+)",
             run_name,
         )
         if match:
