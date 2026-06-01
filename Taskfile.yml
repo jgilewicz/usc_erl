@@ -36,17 +36,6 @@ tasks:
     cmds:
       - |
         for env in HalfCheetah-v5 Hopper-v5 Walker2d-v5 Ant-v5 Swimmer-v5; do
-Dobra wiadomość i zła wiadomość:
-
-**✅ Dobra**: `best_population_fitness` osiąga 260-300 — to jest na poziomie papierowym! Ewolucja działa poprawnie.
-
-**❌ Zła**: `eval_reward` (to co widzisz jako "nagroda") ewaluuje **agenta RL (DDPG)**, a NIE najlepszego osobnika z populacji. Na Swimmerze DDPG zawsze jest słaby (Swimmer Paradox — Sekcja 5.3 artykułu). To jest **błąd metryki, nie treningu**.
-
-Poprawiam — ewaluacja powinna dotyczyć najlepszego osobnika z populacji:
-
-Viewed erl.py:130-246
-Viewed sc_erl.py:190-345
-
 
   smoke-test:
     desc: "Run a quick smoke test for all algorithms on Ant-v5 with seed 42"
