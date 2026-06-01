@@ -3,7 +3,7 @@ name: sc_erl
 
 buffer_size: 1000000
 n_steps: 1000000
-batch_size: 128
+batch_size: 256
 
 network:
   actor_hidden_dim: 256
