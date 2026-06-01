@@ -25,7 +25,7 @@ evolution:
   elite_ratio: 0.1
   rl_injection_interval: 10
   crossover_prob: 0.5
-  crossover_mode: parameter  # Options: parameter, none
+  crossover_mode: distillation  # Options: parameter, distillation, none
   eval_trials: 1
 
 evaluation:

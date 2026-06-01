@@ -1,6 +1,6 @@
 # Evolutionary + Reinforcement Learning (SC-ERL)
 
-This repository contains implementations of hybrid evolutionary and reinforcement-learning algorithms, along with tools to run experiments and perform hyperparameter optimization using Optuna. The project originates from master's research and focuses on comparative experiments (ERL, SC-ERL, DDPG, TD3, PPO) and the study of predictive uncertainty methods (dropout, ensemble, evidential).
+This repository contains implementations of hybrid evolutionary and reinforcement-learning algorithms, along with tools to run experiments and perform hyperparameter optimization using Optuna. The project originates from master's research and focuses on comparative experiments (ERL, SC-ERL, DDPG, TD3, PPO) and the study of predictive uncertainty methods (dropout, ensemble, evidential). The ERL baseline is configured with distilled crossover by default so the comparison reflects the newer distillation-based evolutionary variants rather than the older parameter-crossover setup.
 
 Repository layout
 - `entry_point.py` — main Hydra-based training launcher.
@@ -45,7 +45,8 @@ task tune-all
 Configuration and tuning
 - All configuration files are in `configs/`. When an Optuna study finishes, a per-environment algorithm config is saved into `configs/algorithm/<algo>/<algo>_<env>.yaml`.
 - Optuna settings (study name, `n_trials`, `storage`) are defined in `configs/tune.yaml` (for example `storage: "sqlite:///optuna_hpo.db"`).
-- The SC-ERL family supports variants: `sc_erl`, `sc_erl_dropout`, `sc_erl_ensemble`, and `sc_erl_evidential`. During HPO the implementation uses parameter-freezing rules so that only variant-specific parameters are searched.
+- The ERL baseline uses distilled crossover by default, matching the newer evolutionary setup built around distilled crossover, proximal mutation, and individual-based control.
+- The SC-ERL family supports variants: `sc_erl`, `sc_erl_dropout`, `sc_erl_ensemble`, and `sc_erl_evidential`. During HPO the implementation uses parameter-freezing rules so that only variant-specific parameters are searched, and surrogate selection here uses only individual-based control methods.
 
 Outputs
 - Experiment artifacts and best-parameters are written to `outputs/` (e.g. `optuna_best_<algo>_<env>.yaml`).

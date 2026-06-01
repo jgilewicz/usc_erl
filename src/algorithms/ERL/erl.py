@@ -35,7 +35,7 @@ def ERL(
     elite_ratio: float = 0.2,
     rl_injection_interval: int = 10,
     crossover_prob: float = 0.5,
-    crossover_mode: str = "parameter",
+    crossover_mode: str = "distillation",
     frac_frames_train: float = 1.0,
     eval_trials: int = 1,
     warmup_steps: int = 1000,
