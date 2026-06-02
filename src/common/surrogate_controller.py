@@ -88,6 +88,7 @@ class SurrogateController:
         # Updated each call to generation_based_control for use by callers
         self.last_elite_indices: list[int] = []
         self.last_unselect_indices: list[int] = []
+        self.last_surrogate_ratio: float = 0.0
 
     def generation_based_control(
         self,
@@ -190,6 +191,7 @@ class SurrogateController:
                 if target < len(self.last_fitness):
                     self.last_fitness[target] = self.best_real_fitness
 
+            self.last_surrogate_ratio = 0.0
             return population, fitnesses, steps, True
 
         # Snapshot the critic once before surrogate fitness evaluation to ensure
@@ -206,7 +208,7 @@ class SurrogateController:
 
             fitnesses = []
             steps = 0
-            any_surrogate = False
+            surrogate_count = 0
 
             for i, policy in enumerate(population):
                 if self.rng.random() > self.omega:
@@ -215,7 +217,7 @@ class SurrogateController:
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
-                    any_surrogate = True
+                    surrogate_count += 1
 
             self.last_fitness = fitnesses
 
@@ -244,7 +246,7 @@ class SurrogateController:
 
             fitnesses = []
             steps = 0
-            any_surrogate = False
+            surrogate_count = 0
 
             for i, policy in enumerate(population):
                 sigma_q = self.last_uncertainty[i]
@@ -254,7 +256,7 @@ class SurrogateController:
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
-                    any_surrogate = True
+                    surrogate_count += 1
 
             self.last_fitness = fitnesses
 
@@ -287,7 +289,7 @@ class SurrogateController:
 
             fitnesses = []
             steps = 0
-            any_surrogate = False
+            surrogate_count = 0
 
             for i, policy in enumerate(population):
                 sigma_q = self.last_uncertainty[i]
@@ -297,7 +299,7 @@ class SurrogateController:
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
-                    any_surrogate = True
+                    surrogate_count += 1
 
             self.last_fitness = fitnesses
 
@@ -333,7 +335,7 @@ class SurrogateController:
 
             fitnesses = []
             steps = 0
-            any_surrogate = False
+            surrogate_count = 0
 
             for i, policy in enumerate(population):
                 sigma_q = self.last_uncertainty[i]
@@ -343,11 +345,12 @@ class SurrogateController:
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
-                    any_surrogate = True
+                    surrogate_count += 1
 
             self.last_fitness = fitnesses
 
-        used_real_eval = not any_surrogate
+        self.last_surrogate_ratio = surrogate_count / len(population) if population else 0.0
+        used_real_eval = surrogate_count == 0
 
         population, new_elitists, unselect_indices = self.evolution_module.evolve(
             population=population,

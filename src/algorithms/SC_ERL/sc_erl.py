@@ -188,8 +188,6 @@ def SC_ERL(
 
     generation = 0
     recent_rewards = deque(maxlen=100)
-    # Running estimate of real-env steps per individual; calibrated on full-real generations
-    avg_episode_steps = 1.0
 
     while total_steps < n_steps:
         generation += 1
@@ -212,12 +210,7 @@ def SC_ERL(
 
         total_steps += evo_steps
 
-        # Update avg_episode_steps estimate only on full real-eval generations
-        if used_real_eval and evo_steps > 0:
-            avg_episode_steps = evo_steps / population_size
-        surrogate_ratio = float(
-            np.clip(1.0 - (evo_steps / max(1.0, population_size * avg_episode_steps)), 0.0, 1.0)
-        )
+        surrogate_ratio = surrogate_controller.last_surrogate_ratio
 
         for fitness in fitnesses:
             recent_rewards.append(fitness)
