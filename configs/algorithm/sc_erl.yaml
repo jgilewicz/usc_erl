@@ -39,8 +39,8 @@ surrogate:
   dropout_p: 0.1
   mc_samples: 20
   min_uncertainty_floor: 0.01
-  percentile: 50
-  epsilon: 0.10
+  percentile: 75
+  epsilon: 0.05
   lam: 0.1
 
 warmup:

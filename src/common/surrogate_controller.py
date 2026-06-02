@@ -204,19 +204,12 @@ class SurrogateController:
                 )
             )
 
-            prev_elite_indices: set[int] = set()
-            if self.last_fitness and len(self.last_fitness) == len(population):
-                pop_size = len(population)
-                elite_count = max(2 if pop_size >= 2 else 1, int(pop_size * elite_ratio))
-                ranked = sorted(range(pop_size), key=lambda idx: self.last_fitness[idx], reverse=True)
-                prev_elite_indices = set(ranked[:elite_count])
-
             fitnesses = []
             steps = 0
             any_surrogate = False
 
             for i, policy in enumerate(population):
-                if i == 0 or i in prev_elite_indices or self.rng.random() > self.omega:
+                if self.rng.random() > self.omega:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     steps += s
@@ -249,25 +242,13 @@ class SurrogateController:
 
             scaled_fitnesses = self._normalize_surrogate_fitness(lcb_q_values)
 
-            prev_elite_indices: set[int] = set()
-            if self.last_fitness and len(self.last_fitness) == len(population):
-                pop_size = len(population)
-                elite_count = max(2 if pop_size >= 2 else 1, int(pop_size * elite_ratio))
-                ranked = sorted(range(pop_size), key=lambda idx: self.last_fitness[idx], reverse=True)
-                prev_elite_indices = set(ranked[:elite_count])
-
             fitnesses = []
             steps = 0
             any_surrogate = False
 
             for i, policy in enumerate(population):
                 sigma_q = self.last_uncertainty[i]
-                if (
-                    i == 0
-                    or i in prev_elite_indices
-                    or sigma_q > threshold
-                    or self.rng.random() < self.epsilon
-                ):
+                if sigma_q > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     steps += s
@@ -304,25 +285,13 @@ class SurrogateController:
 
             scaled_fitnesses = self._normalize_surrogate_fitness(lcb_q_values)
 
-            prev_elite_indices: set[int] = set()
-            if self.last_fitness and len(self.last_fitness) == len(population):
-                pop_size = len(population)
-                elite_count = max(2 if pop_size >= 2 else 1, int(pop_size * elite_ratio))
-                ranked = sorted(range(pop_size), key=lambda idx: self.last_fitness[idx], reverse=True)
-                prev_elite_indices = set(ranked[:elite_count])
-
             fitnesses = []
             steps = 0
             any_surrogate = False
 
             for i, policy in enumerate(population):
                 sigma_q = self.last_uncertainty[i]
-                if (
-                    i == 0
-                    or i in prev_elite_indices
-                    or sigma_q > threshold
-                    or self.rng.random() < self.epsilon
-                ):
+                if sigma_q > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     steps += s
@@ -362,25 +331,13 @@ class SurrogateController:
 
             scaled_fitnesses = self._normalize_surrogate_fitness(lcb_q_values)
 
-            prev_elite_indices: set[int] = set()
-            if self.last_fitness and len(self.last_fitness) == len(population):
-                pop_size = len(population)
-                elite_count = max(2 if pop_size >= 2 else 1, int(pop_size * elite_ratio))
-                ranked = sorted(range(pop_size), key=lambda idx: self.last_fitness[idx], reverse=True)
-                prev_elite_indices = set(ranked[:elite_count])
-
             fitnesses = []
             steps = 0
             any_surrogate = False
 
             for i, policy in enumerate(population):
                 sigma_q = self.last_uncertainty[i]
-                if (
-                    i == 0
-                    or i in prev_elite_indices
-                    or sigma_q > threshold
-                    or self.rng.random() < self.epsilon
-                ):
+                if sigma_q > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     steps += s
