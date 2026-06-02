@@ -188,11 +188,13 @@ def SC_ERL(
 
     generation = 0
     recent_rewards = deque(maxlen=100)
+    # Running estimate of real-env steps per individual; calibrated on full-real generations
+    avg_episode_steps = 1.0
 
     while total_steps < n_steps:
         generation += 1
 
-        population, fitnesses, evo_steps = (
+        population, fitnesses, evo_steps, used_real_eval = (
             surrogate_controller.generation_based_control(
                 population=population,
                 env=env,
@@ -205,8 +207,17 @@ def SC_ERL(
                 mutation_fraction=mutation_fraction,
             )
         )
+        elite_indices = surrogate_controller.last_elite_indices
+        unselect_indices = surrogate_controller.last_unselect_indices
 
         total_steps += evo_steps
+
+        # Update avg_episode_steps estimate only on full real-eval generations
+        if used_real_eval and evo_steps > 0:
+            avg_episode_steps = evo_steps / population_size
+        surrogate_ratio = float(
+            np.clip(1.0 - (evo_steps / max(1.0, population_size * avg_episode_steps)), 0.0, 1.0)
+        )
 
         for fitness in fitnesses:
             recent_rewards.append(fitness)
@@ -241,7 +252,7 @@ def SC_ERL(
         if len(replay_buffer) >= batch_size:
             generation_steps = evo_steps + rl_steps
             num_updates = (
-                int(rl_steps * frac_frames_train)
+                int(generation_steps * frac_frames_train)
                 if frac_frames_train > 0.0
                 else gradient_steps
             )
@@ -269,8 +280,10 @@ def SC_ERL(
                     grad_clip_norm=grad_clip_norm,
                 )
 
-        if generation % rl_injection_interval == 0:
-            evolution_module.sync_rl_to_pop(actor, population, fitnesses)
+        if used_real_eval and generation % rl_injection_interval == 0:
+            evolution_module.sync_rl_to_pop(
+                actor, population, fitnesses, elite_indices, unselect_indices
+            )
 
         avg_fitness = np.mean(fitnesses) if fitnesses else 0.0
         best_fitness = max(fitnesses) if fitnesses else 0.0
@@ -333,6 +346,7 @@ def SC_ERL(
                 "actor_loss": actor_loss,
                 "critic_loss": critic_loss,
                 "surrogate_used": surrogate_controller.mode == "surrogate",
+                "surrogate_ratio": surrogate_ratio,
             }
             if surrogate_mode in (
                 SurrogateMode.DROPOUT,

@@ -11,7 +11,7 @@ network:
 
 rl:
   gamma: 0.99
-  tau: 0.005
+  tau: 0.001
   actor_lr: 5e-5
   critic_lr: 5e-4
   exploration_noise_std: 0.1
@@ -39,7 +39,7 @@ surrogate:
   dropout_p: 0.1
   mc_samples: 20
   min_uncertainty_floor: 0.01
-  percentile: 75
+  percentile: 50
   epsilon: 0.10
   lam: 0.1
 

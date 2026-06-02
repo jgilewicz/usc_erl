@@ -10,7 +10,7 @@ network:
 
 rl:
   gamma: 0.99
-  tau: 0.005
+  tau: 0.001
   actor_lr: 5e-5
   critic_lr: 5e-4
   exploration_noise_std: 0.1

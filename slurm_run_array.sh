@@ -1,78 +1,56 @@
 #!/bin/bash
 
 # =============================================================================
-# SC-ERL MuJoCo Experiment Matrix — SLURM Array Job
+# SC-ERL MuJoCo Experiment Matrix — SLURM Array Job (Single Env Mode)
 # =============================================================================
-# Macierz: 8 algorytmów × 5 środowisk × 5 seeds = 200 przebiegów
+# Macierz dla JEDNEGO środowiska: 8 algorytmów × 5 seeds = 40 przebiegów
 #
-# Uruchamianie (pełna macierz):
-#   sbatch --array=0-199 slurm_run_array.sh
-#
-# Uruchamianie (tylko SC-ERL, pierwsze 75 zadań):
-#   sbatch --array=0-74 slurm_run_array.sh
-#
-# Uruchamianie (test: jedno zadanie):
-#   sbatch --array=0 slurm_run_array.sh
+# Uruchamianie (domyślnie Ant-v5):
+#   sbatch --array=0-39 slurm_run_array.sh
 # =============================================================================
 
-# ==========================================
-# Konfiguracja SLURM
-# ==========================================
 #SBATCH -N 1                            # 1 węzeł obliczeniowy
-#SBATCH -c 4                            # 4 rdzenie CPU (MuJoCo + PyTorch loader)
-#SBATCH --mem=16gb                      # 16 GB RAM na zadanie (replay buffer + modele)
-#SBATCH --time=0-08:00:00              # 8 godzin na jedno zadanie (z zapasem dla Ant)
-#SBATCH --job-name=sc_erl_mujoco        # Nazwa zadania widoczna w squeue
+#SBATCH -c 4                            # 4 rdzenie CPU
+#SBATCH --mem=16gb                      # 16 GB RAM na zadanie
+#SBATCH --time=0-08:00:00               # 8 godzin na jedno zadanie
+#SBATCH --job-name=sc_erl_mujoco        # Nazwa zadania
 #SBATCH -p lem-gpu                      # Partycja GPU
-#SBATCH --gres=gpu:1                    # 1 karta GPU (CUDA)
-#SBATCH --output=logs/slurm-%A_%a.out  # Log: %A = job_id, %a = array_id
-#SBATCH --error=logs/slurm-%A_%a.err   # Plik błędów
-#SBATCH --mail-type=FAIL                # Email tylko przy awarii zadania
+#SBATCH --gres=gpu:hopper:1             # 1 karta GPU
+#SBATCH --output=logs/slurm-%A_%a.out   # Log standardowy
+#SBATCH --error=logs/slurm-%A_%a.err    # Plik błędów
+#SBATCH --mail-type=FAIL                # Email przy awarii
 
 # ==========================================
-# Definicja macierzy eksperymentów
+# Dynamiczny wybór środowiska
 # ==========================================
-# Kolejność: algorytm, środowisko, seed
-# Całkowita liczba kombinacji: 8 * 5 * 5 = 200
+ENV="${TARGET_ENV:-Ant-v5}"
 
+# ==========================================
+# Definicja algorytmów i seedów (8 * 5 = 40 kombinacji)
+# ==========================================
 ALGORITHMS=(
-    "sc_erl:dropout"       # 0..24
-    "sc_erl:ensemble"      # 25..49
-    "sc_erl:evidential"    # 50..74
-    "sc_erl:random"        # 75..99
-    "td3:"                 # 100..124
-    "erl:"                 # 125..149
-    "ddpg:"                # 150..174
-    "ppo:"                 # 175..199
-)
-
-ENVS=(
-    "HalfCheetah-v5"
-    "Hopper-v5"
-    "Walker2d-v5"
-    "Ant-v5"
-    "Swimmer-v5"
+    "sc_erl:dropout"       # 0..4
+    "sc_erl:ensemble"      # 5..9
+    "sc_erl:evidential"    # 10..14
+    "sc_erl:random"        # 15..19
+    "td3:"                 # 20..24
+    "erl:"                 # 25..29
+    "ddpg:"                # 30..34
+    "ppo:"                 # 35..39
 )
 
 SEEDS=(0 1 2 3 4)
+N_SEEDS=${#SEEDS[@]}
 
-N_ENVS=${#ENVS[@]}    # 5
-N_SEEDS=${#SEEDS[@]}  # 5
-
-# Mapowanie SLURM_ARRAY_TASK_ID -> (algo_idx, env_idx, seed_idx)
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
 
-ALGO_IDX=$(( TASK_ID / (N_ENVS * N_SEEDS) ))
-REMAINDER=$(( TASK_ID % (N_ENVS * N_SEEDS) ))
-ENV_IDX=$(( REMAINDER / N_SEEDS ))
-SEED_IDX=$(( REMAINDER % N_SEEDS ))
+ALGO_IDX=$(( TASK_ID / N_SEEDS ))
+SEED_IDX=$(( TASK_ID % N_SEEDS ))
 
-# Parsowanie algorytmu i trybu (format "algo:mode")
 ALGO_MODE="${ALGORITHMS[$ALGO_IDX]}"
-ALGO="${ALGO_MODE%%:*}"          # część przed ":"
-SURROGATE_MODE="${ALGO_MODE##*:}" # część po ":"
+ALGO="${ALGO_MODE%%:*}"          
+SURROGATE_MODE="${ALGO_MODE##*:}" 
 
-ENV="${ENVS[$ENV_IDX]}"
 SEED="${SEEDS[$SEED_IDX]}"
 
 # ==========================================
@@ -89,10 +67,10 @@ else
 fi
 
 # ==========================================
-# Środowisko
+# Konfiguracja środowiska uruchomieniowego
 # ==========================================
 echo "=========================================="
-echo " SC-ERL SLURM Array Job"
+echo " SC-ERL SLURM Array Job (.venv mode)"
 echo "=========================================="
 echo " Task ID   : ${TASK_ID}"
 echo " Algorithm : ${ALGO}"
@@ -100,39 +78,43 @@ echo " Mode      : ${SURROGATE_MODE:-N/A}"
 echo " Env       : ${ENV}"
 echo " Seed      : ${SEED}"
 echo " Run Name  : ${RUN_NAME}"
-echo " Node      : $(hostname)"
-echo " GPU       : $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
 echo "=========================================="
 
 # Ładowanie modułów systemowych
 source /usr/local/sbin/modules.sh
 module load Python/3.12.3-GCCcore-13.3.0
 
-# Przejście do katalogu projektu (ZMIEŃ NA SWOJĄ ŚCIEŻKĘ)
-PROJECT_DIR="/home/jakgil6519/workspace/SC-ERL-UE"
+# Przejście do katalogu projektu
+PROJECT_DIR="/home/jakgil6519/workspace/ue_evo_rl"
 cd "${PROJECT_DIR}" || { echo "ERROR: Nie można przejść do ${PROJECT_DIR}"; exit 1; }
 
-# Tworzenie katalogu na logi jeśli nie istnieje
-mkdir -p logs
-
-# ==========================================
-# Instalacja zależności przez uv
-# ==========================================
-# Instalujemy uv jeśli nie jest dostępne globalnie
-if ! command -v uv &> /dev/null; then
-    echo "Instaluję uv..."
-    pip install uv --quiet
+# Aktywacja lokalnego środowiska .venv
+if [ -d ".venv" ]; then
+    source .venv/bin/activate
+else
+    echo "ERROR: Katalog .venv nie istnieje! Zbuduj środowisko na UI."
+    exit 1
 fi
 
-echo "Synchronizuję środowisko uv..."
-uv sync --frozen
+# ==========================================
+# Bezpieczna konfiguracja WandB (Pełny tryb OFFLINE)
+# ==========================================
+export WANDB_API_KEY="TUTAJ_WKLEJ_SWOJ_KLUCZ_WANDB"
+export WANDB_MODE="offline"
+
+# Definiujemy czysty podkatalog na logi lokalne, by uniknąć problemów z NFS
+export WANDB_DIR="${PROJECT_DIR}/wandb_logs"
+
+# Tworzenie niezbędnych struktur katalogów
+mkdir -p logs
+mkdir -p "${WANDB_DIR}"
 
 # ==========================================
 # Uruchomienie eksperymentu
 # ==========================================
-echo "Uruchamiam: ${RUN_NAME}..."
+echo "Uruchamiam python entry_point.py..."
 
-uv run python entry_point.py \
+python entry_point.py \
     algorithm="${ALGO}" \
     ${SURROGATE_ARG} \
     seed="${SEED}" \
@@ -147,11 +129,13 @@ uv run python entry_point.py \
 EXIT_CODE=$?
 
 # ==========================================
-# Synchronizacja WandB po zakończeniu
+# Sync wandb po zakończeniu treningu
 # ==========================================
 if [[ $EXIT_CODE -eq 0 ]]; then
-    echo "Trening zakończony sukcesem. Synchronizuję WandB offline..."
-    uv run wandb sync --sync-all 2>/dev/null || echo "WandB sync pominięty (tryb online)."
+    echo "Trening ukończony. Syncuję logi wandb..."
+    for d in "${WANDB_DIR}/wandb/offline-run-"*; do
+        [[ -d "$d" ]] && wandb sync "$d"
+    done
     echo "Zadanie ${RUN_NAME} ukończone pomyślnie."
 else
     echo "ERROR: Zadanie ${RUN_NAME} zakończyło się błędem (exit code: ${EXIT_CODE})"

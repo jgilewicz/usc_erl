@@ -195,30 +195,30 @@ class EvolutionModule:
         crossover_mode: str = "none",
         replay_buffer: Buffer | None = None,
         mutation_fraction: float = 0.1,
-    ) -> list[Actor]:
-        """Perform rank-based SSNE epoch incorporating elite copies, crossovers, and mutations.
+    ) -> tuple[list[Actor], list[int], list[int]]:
+        """Perform rank-based SSNE epoch matching the reference epoch() implementation.
 
-        Args:
-            mutation_prob: Probability that a given individual in the population is mutated at all.
-            mutation_fraction: Fraction of *weights* to mutate per individual (sparse multi-strength
-                               mutation). Kept small (default 0.1) to avoid catastrophic forgetting.
+        Returns:
+            (new_population, new_elitists, unselect_indices) where new_elitists are the
+            target slots that received elite copies (protected from mutation), and
+            unselect_indices are the remaining non-offspring, non-elite slots after cloning.
         """
         if not population:
-            return population
+            return population, [], []
 
         rng = np.random.default_rng()
         pop_size = len(population)
 
-        # 1. Rank indices by fitness (0 is the best)
+        # 1. Rank indices by fitness (0 = best)
         ranked_indices = sorted(
             range(pop_size), key=lambda index: fitnesses[index], reverse=True
         )
 
-        # Determine elitists (at least 2 if pop_size >= 2)
+        # Elites = original top-k positions by fitness
         elite_count = max(2 if pop_size >= 2 else 1, int(pop_size * elite_ratio))
-        elite_indices = ranked_indices[:elite_count]
+        elitist_index = ranked_indices[:elite_count]
 
-        # Selection step: tournament selection to select offsprings (size is pop_size - elite_count)
+        # Tournament selects offsprings (n = pop_size - elite_count); may overlap with elitist_index
         num_offsprings = pop_size - elite_count
         offspring_indices = self.selection_tournament(
             ranked_indices=ranked_indices,
@@ -226,94 +226,85 @@ class EvolutionModule:
             tournament_size=3,
         )
 
-        # Find unselected candidates
-        unselect_indices = []
-        for i in range(pop_size):
-            if i in offspring_indices or i in elite_indices:
-                continue
-            unselect_indices.append(i)
+        # Unselects = slots not in offspring AND not in elitist_index
+        unselect_indices = [
+            i for i in range(pop_size)
+            if i not in offspring_indices and i not in elitist_index
+        ]
         rng.shuffle(unselect_indices)
 
-        # Construct new pop list of Actor networks
+        # Deep copy population into new_population
         new_population = [copy.deepcopy(actor).to(self.device) for actor in population]
 
-        # Elitism step: Elites are directly preserved at their slots in ranked_indices
-        new_elites_indices = []
-
-        # Copy elite candidates over the unselects (or offsprings if unselects are depleted)
-        for i in elite_indices:
-            new_population[i].load_state_dict(population[i].state_dict())
-            new_elites_indices.append(i)
-
+        # Elite copy step: each elite is cloned into an unselect slot (or offspring slot as fallback).
+        # new_elitists = the TARGET slots that received an elite copy; these are mutation-protected.
+        new_elitists: list[int] = []
+        for elite_idx in elitist_index:
             if unselect_indices:
-                replacee = unselect_indices.pop(0)
+                target = unselect_indices.pop(0)
+            elif offspring_indices:
+                target = offspring_indices.pop(0)
             else:
-                replacee = offspring_indices.pop(0)
-            new_population[replacee].load_state_dict(population[i].state_dict())
+                break
+            new_population[target].load_state_dict(population[elite_idx].state_dict())
+            new_elitists.append(target)
 
-        # 2. Crossover for unselected slots with 100% probability
-        if len(unselect_indices) % 2 != 0:
-            unselect_indices.append(unselect_indices[rng.integers(0, len(unselect_indices))])
+        # Crossover for remaining unselects: random new_elitist × random offspring
+        if unselect_indices:
+            if len(unselect_indices) % 2 != 0:
+                unselect_indices.append(unselect_indices[rng.integers(0, len(unselect_indices))])
 
-        for i, j in zip(unselect_indices[0::2], unselect_indices[1::2]):
-            parent1_idx = int(rng.choice(new_elites_indices))
-            if offspring_indices:
-                parent2_idx = int(rng.choice(offspring_indices))
-            else:
-                parent2_idx = int(rng.choice(ranked_indices))
+            for i, j in zip(unselect_indices[0::2], unselect_indices[1::2]):
+                parent1_idx = int(rng.choice(new_elitists)) if new_elitists else int(rng.choice(ranked_indices))
+                parent2_idx = int(rng.choice(offspring_indices)) if offspring_indices else int(rng.choice(ranked_indices))
 
-            # Copy parent weights to child slots
-            new_population[i].load_state_dict(new_population[parent1_idx].state_dict())
-            new_population[j].load_state_dict(population[parent2_idx].state_dict())
+                new_population[i].load_state_dict(new_population[parent1_idx].state_dict())
+                new_population[j].load_state_dict(population[parent2_idx].state_dict())
 
-            if crossover_mode == "parameter":
-                self.crossover_inplace(new_population[i], new_population[j])
-            elif crossover_mode == "distillation" and replay_buffer is not None:
-                self.distillation_crossover(
-                    child=new_population[i],
-                    parent1=new_population[parent1_idx],
-                    parent2=population[parent2_idx],
-                    replay_buffer=replay_buffer,
-                )
-                self.distillation_crossover(
-                    child=new_population[j],
-                    parent1=population[parent2_idx],
-                    parent2=new_population[parent1_idx],
-                    replay_buffer=replay_buffer,
-                )
-
-        # 3. Crossover for selected offsprings
-        for idx in offspring_indices:
-            new_population[idx].load_state_dict(population[idx].state_dict())
-
-        if offspring_indices and len(offspring_indices) % 2 != 0:
-            offspring_indices.append(offspring_indices[rng.integers(0, len(offspring_indices))])
-
-        for i, j in zip(offspring_indices[0::2], offspring_indices[1::2]):
-            if rng.random() < crossover_prob:
                 if crossover_mode == "parameter":
                     self.crossover_inplace(new_population[i], new_population[j])
                 elif crossover_mode == "distillation" and replay_buffer is not None:
-                    parent1_copy = copy.deepcopy(new_population[i]).to(self.device)
-                    parent2_copy = copy.deepcopy(new_population[j]).to(self.device)
                     self.distillation_crossover(
                         child=new_population[i],
-                        parent1=parent1_copy,
-                        parent2=parent2_copy,
+                        parent1=copy.deepcopy(new_population[parent1_idx]).to(self.device),
+                        parent2=copy.deepcopy(population[parent2_idx]).to(self.device),
                         replay_buffer=replay_buffer,
                     )
                     self.distillation_crossover(
                         child=new_population[j],
-                        parent1=parent2_copy,
-                        parent2=parent1_copy,
+                        parent1=copy.deepcopy(population[parent2_idx]).to(self.device),
+                        parent2=copy.deepcopy(new_population[parent1_idx]).to(self.device),
                         replay_buffer=replay_buffer,
                     )
 
-        # 4. Mutate all slots except the new elites
-        # mutation_prob: probability an individual is mutated at all
-        # mutation_fraction: fraction of *weights* mutated inside each individual (sparse)
+        # Crossover for offsprings: pairs with crossover_prob
+        if offspring_indices:
+            if len(offspring_indices) % 2 != 0:
+                offspring_indices.append(offspring_indices[rng.integers(0, len(offspring_indices))])
+
+            for i, j in zip(offspring_indices[0::2], offspring_indices[1::2]):
+                if rng.random() < crossover_prob:
+                    if crossover_mode == "parameter":
+                        self.crossover_inplace(new_population[i], new_population[j])
+                    elif crossover_mode == "distillation" and replay_buffer is not None:
+                        parent1_copy = copy.deepcopy(new_population[i]).to(self.device)
+                        parent2_copy = copy.deepcopy(new_population[j]).to(self.device)
+                        self.distillation_crossover(
+                            child=new_population[i],
+                            parent1=parent1_copy,
+                            parent2=parent2_copy,
+                            replay_buffer=replay_buffer,
+                        )
+                        self.distillation_crossover(
+                            child=new_population[j],
+                            parent1=parent2_copy,
+                            parent2=parent1_copy,
+                            replay_buffer=replay_buffer,
+                        )
+
+        # Mutate all slots except the new elitist target slots
         for i in range(pop_size):
-            if i not in new_elites_indices:
+            if i not in new_elitists:
                 if rng.random() < mutation_prob:
                     mutated = self._clone_and_mutate(
                         parent=new_population[i],
@@ -323,24 +314,26 @@ class EvolutionModule:
                     )
                     new_population[i].load_state_dict(mutated.state_dict())
 
-        self.safe_replacement_indices = [i for i in range(pop_size) if i not in new_elites_indices]
-        return new_population
+        return new_population, new_elitists, unselect_indices
 
     def sync_rl_to_pop(
         self,
         actor: Actor,
         population: list[Actor],
         fitnesses: list[float],
+        elite_indices: list[int],
+        unselect_indices: list[int],
     ) -> None:
         if not population:
             return
 
-        # Overwrite a safe non-elite slot in the population with the RL actor to protect the elites
-        safe_indices = getattr(self, "safe_replacement_indices", [])
-        if safe_indices:
-            target_index = safe_indices[0]
-        else:
-            # Fallback to the worst index in the old fitnesses if safe list is not available
-            target_index = int(np.argmin(fitnesses)) if fitnesses else 0
+        worst_index = int(np.argmin(fitnesses)) if fitnesses else 0
 
-        population[target_index].load_state_dict(copy.deepcopy(actor.state_dict()))
+        if worst_index not in elite_indices:
+            target = worst_index
+        elif unselect_indices:
+            target = unselect_indices[-1]
+        else:
+            target = elite_indices[-1]
+
+        population[target].load_state_dict(copy.deepcopy(actor.state_dict()))

@@ -11,17 +11,23 @@ class Actor(nn.Module):
         hidden_dim: int,
         action_limit: float = 1.0,
         activation: str = "relu",
+        use_ln: bool = True,
     ):
         super(Actor, self).__init__()
 
         self.action_limit = action_limit
         act_layer = nn.Tanh() if activation.lower() == "tanh" else nn.ReLU()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            act_layer,
-            nn.Linear(hidden_dim, hidden_dim),
-            act_layer,
-        )
+
+        layers: list[nn.Module] = [nn.Linear(state_dim, hidden_dim)]
+        if use_ln:
+            layers.append(nn.LayerNorm(hidden_dim))
+        layers.append(act_layer)
+        layers.append(nn.Linear(hidden_dim, hidden_dim))
+        if use_ln:
+            layers.append(nn.LayerNorm(hidden_dim))
+        layers.append(act_layer)
+        self.net = nn.Sequential(*layers)
+
         self.out_layer = nn.Linear(hidden_dim, action_dim)
 
         nn.init.uniform_(self.out_layer.weight, -3e-3, 3e-3)

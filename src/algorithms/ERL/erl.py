@@ -165,7 +165,7 @@ def ERL(
 
         recent_rewards.append(eval_reward)
 
-        population = evolution_module.evolve(
+        population, elite_indices, unselect_indices = evolution_module.evolve(
             population=population,
             fitnesses=fitnesses,
             mutation_std=mutation_std,
@@ -186,10 +186,11 @@ def ERL(
             noise_std=exploration_noise_std,
         )
         total_steps += rl_steps
+        generation_steps += rl_steps
 
         if len(replay_buffer) >= batch_size:
             num_updates = (
-                int(rl_steps * frac_frames_train)
+                int(generation_steps * frac_frames_train)
                 if frac_frames_train > 0.0
                 else gradient_steps
             )
@@ -218,7 +219,7 @@ def ERL(
                 )
 
         if generation % rl_injection_interval == 0:
-            evolution_module.sync_rl_to_pop(actor, population, fitnesses)
+            evolution_module.sync_rl_to_pop(actor, population, fitnesses, elite_indices, unselect_indices)
 
         avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
         best_fitness = max(fitnesses) if fitnesses else 0.0

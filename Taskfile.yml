@@ -54,7 +54,7 @@ tasks:
 
   # ===========================================================================
   # Laptop Pilot Run (Swimmer-v5, 5 seeds × 8 algos = 40 runs)
-  # RTX 3050 Ti 4GB VRAM → max -P 3 (GPU bottleneck!)
+  # RTX 3050 Ti 4GB VRAM → max -P 4 (GPU bottleneck!)
   # ===========================================================================
 
   run-pilot:
