@@ -81,8 +81,8 @@ class SurrogateController:
         self._running_real_min: float | None = None
         self._running_real_max: float | None = None
 
-        self.ema_sigma_mean: float | None = None
-        self.ema_sigma_std: float | None = None
+        self.ema_cv_mean: float | None = None
+        self.ema_cv_std: float | None = None
         self._uncertainty_ema_alpha: float = 0.2
 
         # Tracking the best real-evaluated actor to ensure elite protection
@@ -120,7 +120,7 @@ class SurrogateController:
             ):
                 try:
                     if self.surrogate_mode == SurrogateMode.DROPOUT:
-                        _, self.last_uncertainty = (
+                        mu_values, self.last_uncertainty = (
                             MCDropout.fitness_evaluation_mc_dropout(
                                 critic=self.critic,
                                 population=population,
@@ -136,6 +136,7 @@ class SurrogateController:
                         batch = self.replay_buffer.sample(batch_size=k_batch)
                         obs = batch["state"].to(self.device)
                         self.critic.eval()
+                        mu_values = []
                         uncertainties = []
                         for policy in population:
                             policy.eval()
@@ -148,22 +149,29 @@ class SurrogateController:
                                 )
                                 epistemic_std = torch.sqrt(epistemic_var.clamp(min=0.0))
                             uncertainties.append(epistemic_std.mean().item())
+                            mu_values.append(mu.mean().item())
                         self.last_uncertainty = uncertainties
                     else:
                         k_batch = min(self.k, len(self.replay_buffer))
                         batch = self.replay_buffer.sample(batch_size=k_batch)
                         obs = batch["state"].to(self.device)
                         self.critic.eval()
+                        mu_values = []
                         uncertainties = []
                         for policy in population:
                             policy.eval()
                             with torch.no_grad():
                                 actions = policy(obs)
-                                _, std_q = self.critic(obs, actions)
+                                mean_q, std_q = self.critic(obs, actions)
                             uncertainties.append(std_q.mean().item())
+                            mu_values.append(mean_q.mean().item())
                         self.last_uncertainty = uncertainties
 
-                    self._update_uncertainty_metrics()
+                    cv_values = [
+                        sigma / (abs(mu) + 1.0)
+                        for sigma, mu in zip(self.last_uncertainty, mu_values)
+                    ]
+                    self._update_uncertainty_metrics(cv_values)
                 except Exception:
                     pass
 
@@ -235,7 +243,11 @@ class SurrogateController:
                     dropout_p=self.dropout_p,
                 )
             )
-            threshold = self._update_uncertainty_metrics()
+            cv_values = [
+                sigma / (abs(mu) + 1.0)
+                for sigma, mu in zip(self.last_uncertainty, surrogate_fitnesses)
+            ]
+            threshold = self._update_uncertainty_metrics(cv_values)
 
             lcb_q_values = []
             for i in range(len(population)):
@@ -251,8 +263,7 @@ class SurrogateController:
             surrogate_count = 0
 
             for i, policy in enumerate(population):
-                sigma_q = self.last_uncertainty[i]
-                if sigma_q > threshold or self.rng.random() < self.epsilon:
+                if cv_values[i] > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     steps += s
@@ -278,7 +289,11 @@ class SurrogateController:
                 uncertainties.append(std_q.mean().item())
 
             self.last_uncertainty = uncertainties
-            threshold = self._update_uncertainty_metrics()
+            cv_values = [
+                sigma / (abs(mu) + 1.0)
+                for sigma, mu in zip(self.last_uncertainty, surrogate_fitnesses)
+            ]
+            threshold = self._update_uncertainty_metrics(cv_values)
 
             lcb_q_values = []
             for i in range(len(population)):
@@ -294,8 +309,7 @@ class SurrogateController:
             surrogate_count = 0
 
             for i, policy in enumerate(population):
-                sigma_q = self.last_uncertainty[i]
-                if sigma_q > threshold or self.rng.random() < self.epsilon:
+                if cv_values[i] > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     steps += s
@@ -324,7 +338,11 @@ class SurrogateController:
                 uncertainties.append(epistemic_std.mean().item())
 
             self.last_uncertainty = uncertainties
-            threshold = self._update_uncertainty_metrics()
+            cv_values = [
+                sigma / (abs(mu) + 1.0)
+                for sigma, mu in zip(self.last_uncertainty, surrogate_fitnesses)
+            ]
+            threshold = self._update_uncertainty_metrics(cv_values)
 
             lcb_q_values = []
             for i in range(len(population)):
@@ -340,8 +358,7 @@ class SurrogateController:
             surrogate_count = 0
 
             for i, policy in enumerate(population):
-                sigma_q = self.last_uncertainty[i]
-                if sigma_q > threshold or self.rng.random() < self.epsilon:
+                if cv_values[i] > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     steps += s
@@ -431,34 +448,34 @@ class SurrogateController:
 
         return fitnesses, total_steps
 
-    def _update_uncertainty_metrics(self) -> float:
-        if not self.last_uncertainty:
+    def _update_uncertainty_metrics(self, cv_values: list[float]) -> float:
+        if not cv_values:
             self.last_uncertainty_mean = 0.0
             self.last_uncertainty_max = 0.0
             self.last_uncertainty_threshold = 0.0
             return 0.0
 
-        uncertainties = np.nan_to_num(
-            np.array(self.last_uncertainty, dtype=np.float64),
+        cv_arr = np.nan_to_num(
+            np.array(cv_values, dtype=np.float64),
             nan=0.0,
             posinf=1e3,
             neginf=0.0,
         )
 
-        batch_mean = float(np.mean(uncertainties))
-        batch_std = float(np.std(uncertainties))
+        batch_mean = float(np.mean(cv_arr))
+        batch_std = float(np.std(cv_arr))
         self.last_uncertainty_mean = batch_mean
-        self.last_uncertainty_max = float(np.max(uncertainties))
+        self.last_uncertainty_max = float(np.max(cv_arr))
 
         alpha = self._uncertainty_ema_alpha
-        if self.ema_sigma_mean is None:
-            self.ema_sigma_mean = batch_mean
-            self.ema_sigma_std = batch_std
+        if self.ema_cv_mean is None:
+            self.ema_cv_mean = batch_mean
+            self.ema_cv_std = batch_std
         else:
-            self.ema_sigma_mean = alpha * batch_mean + (1 - alpha) * self.ema_sigma_mean
-            self.ema_sigma_std = alpha * batch_std + (1 - alpha) * self.ema_sigma_std
+            self.ema_cv_mean = alpha * batch_mean + (1 - alpha) * self.ema_cv_mean
+            self.ema_cv_std = alpha * batch_std + (1 - alpha) * self.ema_cv_std
 
-        threshold = self.ema_sigma_mean + 2.0 * self.ema_sigma_std
+        threshold = self.ema_cv_mean + 2.0 * self.ema_cv_std
         self.last_uncertainty_threshold = threshold
 
         return threshold
