@@ -157,19 +157,25 @@ def evidential_loss(
 ) -> torch.Tensor:
 
     # 1. Negative Log-Likelihood (NLL)
-    twoB_1_v = 2 * beta * (1 + v)
+    # alpha comes from softplus + 1 + eps — unbounded above.
+    # lgamma overflows float32 to inf for alpha >> 1; cap here to keep it finite.
+    alpha_safe = alpha.clamp(max=1e4)
+
+    # beta and v are floored by EvidentialModule (_EPS=1e-4), but clamp defensively
+    # before log to guard against any upstream numerical drift.
+    twoB_1_v = (2 * beta * (1 + v)).clamp(min=1e-8)
     error = y_true - mu
 
     nll = (
         0.5 * math.log(math.pi)
         - 0.5 * torch.log(v)
-        - alpha * torch.log(twoB_1_v)
-        + (alpha + 0.5) * torch.log(twoB_1_v + v * error.pow(2))
-        + torch.lgamma(alpha)
-        - torch.lgamma(alpha + 0.5)
+        - alpha_safe * torch.log(twoB_1_v)
+        + (alpha_safe + 0.5) * torch.log((twoB_1_v + v * error.pow(2)).clamp(min=1e-8))
+        + torch.lgamma(alpha_safe)
+        - torch.lgamma(alpha_safe + 0.5)
     )
 
-    # 2. Evidence Regularization
+    # 2. Evidence Regularization (uses original alpha — gradient incentivises low alpha)
     reg = torch.abs(error) * (2 * v + alpha)
 
     return (nll + lam * reg).mean()

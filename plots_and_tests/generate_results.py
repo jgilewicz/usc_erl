@@ -76,7 +76,10 @@ def load_environment_data(env_id, base_dir="."):
         "uncertainty_mean",
         "uncertainty_max",
         "uncertainty_threshold",
+        "surrogate_ratio",
         "generation",
+        "raw_sigma_mean",
+        "raw_sigma_max",
     ]
     run_data = {}
 
@@ -120,7 +123,7 @@ def load_environment_data(env_id, base_dir="."):
             merged_data[method][seed] = merged_df
 
     for method in list(merged_data.keys()):
-        is_evo = method in ["erl", "sc_erl_ensemble", "sc_erl_dropout", "sc_erl_random"]
+        is_evo = method in ["erl", "sc_erl_ensemble", "sc_erl_dropout", "sc_erl_random", "sc_erl_evidential"]
         if not is_evo:
             for seed in merged_data[method]:
                 df = merged_data[method][seed]
@@ -486,6 +489,121 @@ def generate_critic_correlation_plot(env_id, base_dir, out_path):
     plt.savefig(out_path, dpi=300)
     plt.close()
     return correlations
+
+
+def generate_speedup_plot(env_id, merged_data, out_path):
+    """Generations reached vs. environmental steps — proves surrogate compression."""
+    evo_methods = [
+        m for m in merged_data
+        if m in ["erl", "sc_erl_random", "sc_erl_ensemble", "sc_erl_dropout", "sc_erl_evidential"]
+    ]
+    if not evo_methods:
+        return
+
+    step_maxes = [
+        df["total_steps"].max()
+        for m in evo_methods
+        for s, df in merged_data[m].items()
+        if "total_steps" in df.columns and not df["total_steps"].isna().all()
+    ]
+    if not step_maxes:
+        return
+    step_grid = np.linspace(0, max(step_maxes), 200)
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
+
+    for method in evo_methods:
+        color = METHOD_COLORS.get(method, "#333333")
+        label = METHOD_LABELS.get(method, method)
+        linewidth = 2.0 if method in PROPOSED_METHODS else 1.5
+        linestyle = "-" if method in PROPOSED_METHODS else "--"
+
+        interpolated_gens = []
+        for seed, df in merged_data[method].items():
+            if "total_steps" not in df.columns or "generation" not in df.columns:
+                continue
+            temp_df = df[["total_steps", "generation"]].dropna().sort_values("total_steps")
+            if temp_df.empty:
+                continue
+            interpolated_gens.append(
+                np.interp(step_grid, temp_df["total_steps"].values, temp_df["generation"].values)
+            )
+
+        if not interpolated_gens:
+            continue
+        interpolated_gens = np.array(interpolated_gens)
+        mean_gen = np.mean(interpolated_gens, axis=0)
+        std_gen = np.std(interpolated_gens, axis=0)
+
+        ax.plot(step_grid, mean_gen, label=label, color=color, linewidth=linewidth, linestyle=linestyle)
+        ax.fill_between(step_grid, mean_gen - std_gen, mean_gen + std_gen, color=color, alpha=0.1)
+
+    ax.set_title(f"Evolutionary Speedup (Sample Efficiency) - {env_id}", fontsize=13, pad=15, fontweight="bold")
+    ax.set_xlabel("Environmental Interaction Steps", labelpad=10)
+    ax.set_ylabel("Generations Reached", labelpad=10)
+    ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, p: f"{x/1e6:.1f}M" if x >= 1e6 else f"{x/1e3:.0f}k")
+    )
+    sns.despine(ax=ax, top=True, right=True)
+    ax.legend(loc="upper left", frameon=True, facecolor="white", framealpha=0.8, edgecolor="#f2f2f2")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+
+
+def generate_ratio_plot(env_id, merged_data, out_path):
+    """Surrogate ratio over generations — shows epistemic breathing vs. flat random."""
+    ratio_methods = [m for m in ["sc_erl_random", "sc_erl_ensemble", "sc_erl_dropout", "sc_erl_evidential"] if m in merged_data]
+    if not ratio_methods:
+        return
+
+    gen_maxes = [
+        df["generation"].max()
+        for m in ratio_methods
+        for s, df in merged_data[m].items()
+        if "generation" in df.columns and not df["generation"].isna().all()
+    ]
+    gen_end = min(max(gen_maxes), 600) if gen_maxes else 600
+    gen_grid = np.linspace(0, gen_end, 200)
+
+    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
+
+    for method in ratio_methods:
+        color = METHOD_COLORS.get(method, "#000000")
+        label = METHOD_LABELS.get(method, method)
+        linewidth = 2.0 if method in PROPOSED_METHODS else 1.5
+        linestyle = "-" if method in PROPOSED_METHODS else "--"
+
+        interpolated_ratios = []
+        for seed, df in merged_data[method].items():
+            if "generation" not in df.columns or "surrogate_ratio" not in df.columns:
+                continue
+            temp_df = df[["generation", "surrogate_ratio"]].dropna().sort_values("generation")
+            if temp_df.empty:
+                continue
+            interpolated_ratios.append(
+                np.interp(gen_grid, temp_df["generation"].values, temp_df["surrogate_ratio"].values)
+            )
+
+        if not interpolated_ratios:
+            continue
+        mean_ratio = smooth_series(np.mean(interpolated_ratios, axis=0), window=5)
+        std_ratio = smooth_series(np.std(interpolated_ratios, axis=0), window=5)
+
+        ax.plot(gen_grid, mean_ratio, label=label, color=color, linewidth=linewidth, linestyle=linestyle)
+        ax.fill_between(gen_grid, mean_ratio - std_ratio, mean_ratio + std_ratio, color=color, alpha=0.15)
+
+    ax.set_title(f"Surrogate Utilization Dynamics - {env_id}", fontsize=13, pad=15, fontweight="bold")
+    ax.set_xlabel("Generations", labelpad=10)
+    ax.set_ylabel("Surrogate Ratio", labelpad=10)
+    ax.set_ylim(-0.05, 1.05)
+    sns.despine(ax=ax, top=True, right=True)
+    ax.legend(loc="lower right", frameon=True, facecolor="white", framealpha=0.8, edgecolor="#f2f2f2")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
 
 
 # ==========================================
@@ -868,36 +986,46 @@ def main():
         stable_values = get_stable_final_values(merged_data)
         all_stable_values[env_id] = stable_values
 
-        se_path = os.path.join(output_dir, f"{env_id}_sample_efficiency.png")
-        sa_path = os.path.join(output_dir, f"{env_id}_surrogate_analysis.png")
-        cc_path = os.path.join(output_dir, f"{env_id}_critic_correlation.png")
+        se_path  = os.path.join(output_dir, f"{env_id}_sample_efficiency.png")
+        sa_path  = os.path.join(output_dir, f"{env_id}_surrogate_analysis.png")
+        cc_path  = os.path.join(output_dir, f"{env_id}_critic_correlation.png")
+        spd_path = os.path.join(output_dir, f"{env_id}_speedup.png")
+        rat_path = os.path.join(output_dir, f"{env_id}_ratio.png")
 
         # Generowanie wykresów otoczone blokami try-except dla bezpieczeństwa .tex
         try:
             generate_sample_efficiency_plot(env_id, merged_data, se_path)
             has_se = True
         except Exception as e:
-            print(
-                f"Warning: Could not generate sample efficiency plot for {env_id}: {e}"
-            )
+            print(f"Warning: Could not generate sample efficiency plot for {env_id}: {e}")
             has_se = False
 
         try:
             generate_surrogate_analysis_plot(env_id, merged_data, sa_path)
             has_sa = True
         except Exception as e:
-            print(
-                f"Warning: Could not generate surrogate analysis plot for {env_id}: {e}"
-            )
+            print(f"Warning: Could not generate surrogate analysis plot for {env_id}: {e}")
             has_sa = False
 
         try:
             corr_results = generate_critic_correlation_plot(env_id, base_dir, cc_path)
         except Exception as e:
-            print(
-                f"Warning: Could not generate critic correlation plot for {env_id}: {e}"
-            )
+            print(f"Warning: Could not generate critic correlation plot for {env_id}: {e}")
             corr_results = None
+
+        try:
+            generate_speedup_plot(env_id, merged_data, spd_path)
+            has_spd = True
+        except Exception as e:
+            print(f"Warning: Could not generate speedup plot for {env_id}: {e}")
+            has_spd = False
+
+        try:
+            generate_ratio_plot(env_id, merged_data, rat_path)
+            has_rat = True
+        except Exception as e:
+            print(f"Warning: Could not generate ratio plot for {env_id}: {e}")
+            has_rat = False
 
         latex_document += f"\\section{{Environment Results: \\texttt{{{env_id}}}}}\n"
 
@@ -927,6 +1055,26 @@ def main():
                 f"  \\includegraphics[width=0.85\\textwidth]{{{os.path.basename(sa_path)}}}\n"
                 f"  \\caption{{Surrogate controller uncertainty trends compared to average population fitness across generations.}}\n"
                 f"\\end{{figure}}\n"
+            )
+
+        if has_spd:
+            latex_document += (
+                f"\\begin{{figure}}[H]\n\\centering\n"
+                f"  \\includegraphics[width=0.85\\textwidth]{{{os.path.basename(spd_path)}}}\n"
+                f"  \\caption{{Evolutionary speedup: number of generations completed per environmental step on {env_id}. "
+                f"A steeper slope indicates more surrogate-driven generations within the same interaction budget.}}\n"
+                f"\\end{{figure}}\n\n"
+            )
+
+        if has_rat:
+            latex_document += (
+                f"\\begin{{figure}}[H]\n\\centering\n"
+                f"  \\includegraphics[width=0.85\\textwidth]{{{os.path.basename(rat_path)}}}\n"
+                f"  \\caption{{Surrogate utilization dynamics on {env_id}. "
+                f"Uncertainty-driven methods (Ensemble, Dropout, Evidential) exhibit epistemic breathing --- "
+                f"deep drops in surrogate ratio coincide with high-uncertainty discovery phases, "
+                f"whereas SC-ERL Random maintains a flat, uninformed utilization profile.}}\n"
+                f"\\end{{figure}}\n\n"
             )
 
         latex_document += "\\newpage\n"

@@ -105,9 +105,12 @@ def main():
         "uncertainty_mean",
         "uncertainty_max",
         "uncertainty_threshold",
+        "surrogate_ratio",
         "critic_loss",
         "total_steps",
         "generation",
+        "raw_sigma_mean",
+        "raw_sigma_max",
     ]
     for metric in METRICS + ["summary"]:
         os.makedirs(os.path.join(script_dir, metric), exist_ok=True)
