@@ -5,6 +5,12 @@ import wandb
 from omegaconf import OmegaConf
 
 
+def normalize_env_id(env_id):
+    if not env_id:
+        return env_id
+    return re.sub(r"(?i)walker(?:2d)?", "Walker2d", env_id)
+
+
 def flatten_dict(d, parent_key="", sep="."):
     items = []
     for k, v in d.items():
@@ -79,7 +85,7 @@ def determine_env_and_seed(run):
                 env_id = match.group(1)
             if seed is None:
                 seed = int(match.group(2))
-    return (env_id, seed)
+    return (normalize_env_id(env_id), seed)
 
 
 def main():
@@ -91,7 +97,7 @@ def main():
     entity = config.wandb.entity
     project = config.wandb.project
     allowed_algorithms = set(config.algorithms)
-    allowed_environments = set(config.environments)
+    allowed_environments = {normalize_env_id(e) for e in config.environments}
     print("Initializing WandB API...")
     api = wandb.Api()
     project_path = f"{entity}/{project}"

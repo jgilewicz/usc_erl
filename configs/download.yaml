@@ -13,7 +13,6 @@ algorithms:
   - ddpg
 
 environments:
-  - HalfCheetah-v5
   - Hopper-v5
   - Walker2d-v5
   - Ant-v5

@@ -26,6 +26,21 @@ plt.rcParams.update(
     }
 )
 
+def normalize_env_id(env_id):
+    if not env_id:
+        return env_id
+    return re.sub(r"(?i)walker(?:2d)?", "Walker2d", env_id)
+
+
+def get_env_file_variants(env_id):
+    """For Walker environments return both Walker2d-vX and Walker-vX filenames."""
+    if not re.search(r"(?i)walker", env_id):
+        return [env_id]
+    canonical = re.sub(r"(?i)walker(?:2d)?", "Walker2d", env_id)
+    short = re.sub(r"(?i)walker(?:2d)?", "Walker", env_id)
+    return list(dict.fromkeys([canonical, short]))
+
+
 METHOD_COLORS = {
     "sc_erl_dropout": "#0173b2",
     "sc_erl_ensemble": "#029e73",
@@ -84,30 +99,35 @@ def load_environment_data(env_id, base_dir="."):
     run_data = {}
 
     for metric in metrics:
-        file_path = os.path.join(base_dir, metric, f"{env_id}.csv")
-        if not os.path.exists(file_path):
-            continue
-        df = pd.read_csv(file_path)
-        df = df.replace(["Infinity", "inf", "inf.0"], np.nan)
-
-        for col in df.columns:
-            if col == "Step" or col.endswith("__MIN") or col.endswith("__MAX"):
+        for file_env_id in get_env_file_variants(env_id):
+            file_path = os.path.join(base_dir, metric, f"{file_env_id}.csv")
+            if not os.path.exists(file_path):
                 continue
+            df = pd.read_csv(file_path)
+            df = df.replace(["Infinity", "inf", "inf.0"], np.nan)
 
-            method, seed, parsed_metric = parse_column_header(col, env_id)
-            if method is None or parsed_metric != metric:
-                continue
+            for col in df.columns:
+                if col == "Step" or col.endswith("__MIN") or col.endswith("__MAX"):
+                    continue
 
-            if method not in run_data:
-                run_data[method] = {}
-            if seed not in run_data[method]:
-                run_data[method][seed] = []
+                method, seed, parsed_metric = None, None, None
+                for variant in get_env_file_variants(file_env_id):
+                    method, seed, parsed_metric = parse_column_header(col, variant)
+                    if method is not None:
+                        break
+                if method is None or parsed_metric != metric:
+                    continue
 
-            sub_df = df[["Step", col]].copy()
-            sub_df[col] = pd.to_numeric(sub_df[col], errors="coerce")
-            sub_df = sub_df.dropna()
-            sub_df = sub_df.rename(columns={col: metric})
-            run_data[method][seed].append(sub_df)
+                if method not in run_data:
+                    run_data[method] = {}
+                if seed not in run_data[method]:
+                    run_data[method][seed] = []
+
+                sub_df = df[["Step", col]].copy()
+                sub_df[col] = pd.to_numeric(sub_df[col], errors="coerce")
+                sub_df = sub_df.dropna()
+                sub_df = sub_df.rename(columns={col: metric})
+                run_data[method][seed].append(sub_df)
 
     merged_data = {}
     for method in run_data:
@@ -960,7 +980,13 @@ def main():
         return
 
     env_files = glob.glob(os.path.join(eval_reward_dir, "*.csv"))
-    environments = [os.path.basename(f).replace(".csv", "") for f in env_files]
+    seen_envs: set = set()
+    environments = []
+    for f in sorted(env_files):
+        norm = normalize_env_id(os.path.basename(f).replace(".csv", ""))
+        if norm not in seen_envs:
+            seen_envs.add(norm)
+            environments.append(norm)
 
     output_dir = os.path.join(base_dir, "results_output")
     os.makedirs(output_dir, exist_ok=True)
