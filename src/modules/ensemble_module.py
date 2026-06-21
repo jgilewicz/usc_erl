@@ -61,7 +61,7 @@ class EnsembleModule(nn.Module):
             mask = torch.bernoulli(torch.full_like(current_q, mask_prob))
 
             noisy_target_q = target_q * (1.0 + torch.randn_like(target_q) * 0.02)
-            loss = F.smooth_l1_loss(current_q, noisy_target_q, reduction='none')
+            loss = F.smooth_l1_loss(current_q, noisy_target_q, reduction="none")
 
             masked_loss = (loss * mask).sum() / (mask.sum() + 1e-8)
             total_loss += masked_loss

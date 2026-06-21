@@ -17,15 +17,24 @@ tasks:
     cmds:
       - uv run python entry_point.py algorithm={{.ALGO}} {{.CLI_ARGS}}
 
-  run-mujoco-parallel:
-    desc: "Runs MuJoCo experiment matrix in parallel (shuf+xargs). Tune PARALLEL= (default 4)"
+  run-parallel:
+    desc: "Run all 8 algorithms across all 5 MuJoCo environments (all 5 seeds) in parallel"
     vars:
       PARALLEL: '{{default "4" .PARALLEL}}'
     cmds:
       - |
         set -euo pipefail
-        ENVS=("Hopper-v5" "Swimmer-v5")
-        ALGOS=("sc_erl:dropout" "sc_erl:ensemble" "sc_erl:evidential" "sc_erl:random")
+        ENVS=("HalfCheetah-v5" "Hopper-v5" "Walker2d-v5" "Ant-v5" "Swimmer-v5")
+        ALGOS=(
+          "sc_erl:dropout"
+          "sc_erl:ensemble"
+          "sc_erl:evidential"
+          "sc_erl:random"
+          "td3:"
+          "erl:"
+          "ddpg:"
+          "ppo:"
+        )
         SEEDS=(0 1 2 3 4)
         mkdir -p logs
 
@@ -35,10 +44,15 @@ tasks:
               ALGO="${ALGO_MODE%%:*}"
               MODE="${ALGO_MODE##*:}"
               for SEED in "${SEEDS[@]}"; do
-                RUN_NAME="${ALGO}${MODE:+_${MODE}}_${ENV}_seed${SEED}"
-                SURROGATE_ARG=""
-                TAGS="[MuJoCo,${ALGO},${MODE:-baseline}]"
-                [[ -n "$MODE" ]] && SURROGATE_ARG="surrogate.mode=${MODE}"
+                if [[ -n "$MODE" ]]; then
+                  RUN_NAME="${ALGO}_${MODE}_${ENV}_seed${SEED}"
+                  TAGS="[MuJoCo,${ALGO},${MODE}]"
+                  SURROGATE_ARG="surrogate.mode=${MODE}"
+                else
+                  RUN_NAME="${ALGO}_${ENV}_seed${SEED}"
+                  TAGS="[MuJoCo,${ALGO},baseline]"
+                  SURROGATE_ARG=""
+                fi
                 echo "uv run python entry_point.py \
                   algorithm=${ALGO} \
                   ${SURROGATE_ARG} \
@@ -51,86 +65,6 @@ tasks:
                   'wandb.tags=${TAGS}' \
                   'hydra.run.dir=outputs/${RUN_NAME}'"
               done
-            done
-          done
-        }
-
-        generate_commands | shuf | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/run_$$.out 2>&1'
-
-  run-hopper-ensemble:
-    desc: "Runs MuJoCo Hopper-v5 experiment for ensemble, skipping finished seeds"
-    vars:
-      PARALLEL: '{{default "4" .PARALLEL}}'
-    cmds:
-      - |
-        set -euo pipefail
-        ENV="Hopper-v5"
-        ALGO_MODE="sc_erl:ensemble"
-        SEEDS=(1 2 3) # Skipping 0 and 4
-        mkdir -p logs
-
-        generate_commands() {
-          ALGO="${ALGO_MODE%%:*}"
-          MODE="${ALGO_MODE##*:}"
-          for SEED in "${SEEDS[@]}"; do
-            RUN_NAME="${ALGO}${MODE:+_${MODE}}_${ENV}_seed${SEED}"
-            SURROGATE_ARG=""
-            TAGS="[MuJoCo,${ALGO},${MODE:-baseline}]"
-            [[ -n "$MODE" ]] && SURROGATE_ARG="surrogate.mode=${MODE}"
-            echo "uv run python entry_point.py \
-              algorithm=${ALGO} \
-              ${SURROGATE_ARG} \
-              seed=${SEED} \
-              env.id=${ENV} \
-              eval_env.id=${ENV} \
-              n_steps=1000000 \
-              wandb.enabled=true \
-              'wandb.name=${RUN_NAME}' \
-              'wandb.tags=${TAGS}' \
-              'hydra.run.dir=outputs/${RUN_NAME}'"
-          done
-        }
-
-        generate_commands | shuf | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/run_$$.out 2>&1'
-
-  run-hopper-others:
-    desc: "Runs MuJoCo Hopper-v5 experiment for evidential, random, dropout, skipping finished seeds"
-    vars:
-      PARALLEL: '{{default "4" .PARALLEL}}'
-    cmds:
-      - |
-        set -euo pipefail
-        ENV="Hopper-v5"
-        ALGOS=("sc_erl:dropout" "sc_erl:evidential" "sc_erl:random")
-        mkdir -p logs
-
-        generate_commands() {
-          for ALGO_MODE in "${ALGOS[@]}"; do
-            ALGO="${ALGO_MODE%%:*}"
-            MODE="${ALGO_MODE##*:}"
-            
-            if [ "$MODE" = "dropout" ]; then
-              SEEDS=(1 2 4) # Skipping 0 and 3
-            else
-              SEEDS=(0 1 2 3 4)
-            fi
-            
-            for SEED in "${SEEDS[@]}"; do
-              RUN_NAME="${ALGO}${MODE:+_${MODE}}_${ENV}_seed${SEED}"
-              SURROGATE_ARG=""
-              TAGS="[MuJoCo,${ALGO},${MODE:-baseline}]"
-              [[ -n "$MODE" ]] && SURROGATE_ARG="surrogate.mode=${MODE}"
-              echo "uv run python entry_point.py \
-                algorithm=${ALGO} \
-                ${SURROGATE_ARG} \
-                seed=${SEED} \
-                env.id=${ENV} \
-                eval_env.id=${ENV} \
-                n_steps=1000000 \
-                wandb.enabled=true \
-                'wandb.name=${RUN_NAME}' \
-                'wandb.tags=${TAGS}' \
-                'hydra.run.dir=outputs/${RUN_NAME}'"
             done
           done
         }

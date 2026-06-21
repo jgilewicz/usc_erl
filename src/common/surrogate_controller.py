@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from common.reply_buffer import Buffer
 from common.utils import surrogate_fitness, rollout_policy
-from modules.mc_dropout import MCDropout
+from modules.mc_dropout_module import MCDropout
 
 
 class SurrogateMode(Enum):
@@ -170,7 +170,7 @@ class SurrogateController:
                         self.last_uncertainty = uncertainties
 
                     cv_values = [
-                        sigma / (abs(mu)**0.5 + 1.0)
+                        sigma / (abs(mu) ** 0.5 + 1.0)
                         for sigma, mu in zip(self.last_uncertainty, mu_values)
                     ]
                     self._update_uncertainty_metrics(cv_values)
@@ -246,7 +246,7 @@ class SurrogateController:
                 )
             )
             cv_values = [
-                sigma / (abs(mu)**0.5 + 1.0)
+                sigma / (abs(mu) ** 0.5 + 1.0)
                 for sigma, mu in zip(self.last_uncertainty, surrogate_fitnesses)
             ]
             threshold = self._update_uncertainty_metrics(cv_values)
@@ -255,7 +255,9 @@ class SurrogateController:
             for i in range(len(population)):
                 mu_q = surrogate_fitnesses[i]
                 sigma_q = self.last_uncertainty[i]
-                lcb_q = float(np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None))
+                lcb_q = float(
+                    np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None)
+                )
                 lcb_q_values.append(lcb_q)
 
             scaled_fitnesses = self._normalize_surrogate_fitness(lcb_q_values)
@@ -292,7 +294,7 @@ class SurrogateController:
 
             self.last_uncertainty = uncertainties
             cv_values = [
-                sigma / (abs(mu)**0.5 + 1.0)
+                sigma / (abs(mu) ** 0.5 + 1.0)
                 for sigma, mu in zip(self.last_uncertainty, surrogate_fitnesses)
             ]
             threshold = self._update_uncertainty_metrics(cv_values)
@@ -301,7 +303,9 @@ class SurrogateController:
             for i in range(len(population)):
                 mu_q = surrogate_fitnesses[i]
                 sigma_q = self.last_uncertainty[i]
-                lcb_q = float(np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None))
+                lcb_q = float(
+                    np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None)
+                )
                 lcb_q_values.append(lcb_q)
 
             scaled_fitnesses = self._normalize_surrogate_fitness(lcb_q_values)
@@ -334,14 +338,16 @@ class SurrogateController:
                     actions = policy(obs)
                     mu, v, alpha, beta = surrogate_critic(obs, actions)
                     epistemic_var = beta / (v * (alpha - 1.0) + 1e-6)
-                    epistemic_var = torch.nan_to_num(epistemic_var, nan=0.0, posinf=1e3, neginf=0.0)
+                    epistemic_var = torch.nan_to_num(
+                        epistemic_var, nan=0.0, posinf=1e3, neginf=0.0
+                    )
                     epistemic_std = torch.sqrt(epistemic_var.clamp(min=0.0))
                 surrogate_fitnesses.append(mu.mean().item())
                 uncertainties.append(epistemic_std.mean().item())
 
             self.last_uncertainty = uncertainties
             cv_values = [
-                sigma / (abs(mu)**0.5 + 1.0)
+                sigma / (abs(mu) ** 0.5 + 1.0)
                 for sigma, mu in zip(self.last_uncertainty, surrogate_fitnesses)
             ]
             threshold = self._update_uncertainty_metrics(cv_values)
@@ -350,7 +356,9 @@ class SurrogateController:
             for i in range(len(population)):
                 mu_q = surrogate_fitnesses[i]
                 sigma_q = self.last_uncertainty[i]
-                lcb_q = float(np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None))
+                lcb_q = float(
+                    np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None)
+                )
                 lcb_q_values.append(lcb_q)
 
             scaled_fitnesses = self._normalize_surrogate_fitness(lcb_q_values)
@@ -370,7 +378,9 @@ class SurrogateController:
 
             self.last_fitness = fitnesses
 
-        self.last_surrogate_ratio = surrogate_count / len(population) if population else 0.0
+        self.last_surrogate_ratio = (
+            surrogate_count / len(population) if population else 0.0
+        )
         used_real_eval = surrogate_count < len(population)
 
         population, new_elitists, unselect_indices = self.evolution_module.evolve(
@@ -475,7 +485,9 @@ class SurrogateController:
         if self.last_uncertainty:
             raw = np.nan_to_num(
                 np.array(self.last_uncertainty, dtype=np.float64),
-                nan=0.0, posinf=1e3, neginf=0.0,
+                nan=0.0,
+                posinf=1e3,
+                neginf=0.0,
             )
             self.last_raw_sigma_mean = float(np.mean(raw))
             self.last_raw_sigma_max = float(np.max(raw))

@@ -30,7 +30,6 @@ def SC_ERL(
     batch_size: int = 64,
     device: torch.device = torch.device("cpu"),
     actor_hidden_dim: int = 256,
-    critic_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
     mutation_std: float = 0.05,
@@ -99,7 +98,6 @@ def SC_ERL(
     critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
         activation="elu",
     ).to(device)
@@ -107,7 +105,6 @@ def SC_ERL(
     target_critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
         activation="elu",
     ).to(device)
@@ -133,13 +130,11 @@ def SC_ERL(
         critic = EvidentialCritic(
             state_dim=state_dim,
             action_dim=action_dim,
-            hidden_dim=critic_hidden_dim,
         ).to(device)
 
         target_critic = EvidentialCritic(
             state_dim=state_dim,
             action_dim=action_dim,
-            hidden_dim=critic_hidden_dim,
         ).to(device)
 
         target_critic.load_state_dict(critic.state_dict())

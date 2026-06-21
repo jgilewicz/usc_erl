@@ -4,7 +4,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import gymnasium as gym
-import gymnasium_robotics
 import hydra
 import numpy as np
 import torch
@@ -114,7 +113,6 @@ def main(cfg: DictConfig) -> None:
             config=OmegaConf.to_container(cfg, resolve=True),
         )
 
-    gym.register_envs(gymnasium_robotics)
 
     if cfg.name == "erl":
         ERL(
@@ -127,7 +125,6 @@ def main(cfg: DictConfig) -> None:
             batch_size=cfg.batch_size,
             device=device,
             actor_hidden_dim=cfg.network.actor_hidden_dim,
-            critic_hidden_dim=cfg.network.critic_hidden_dim,
             gamma=cfg.rl.gamma,
             tau=cfg.rl.tau,
             mutation_std=cfg.evolution.mutation_std,
@@ -159,7 +156,6 @@ def main(cfg: DictConfig) -> None:
             batch_size=cfg.batch_size,
             device=device,
             actor_hidden_dim=cfg.network.actor_hidden_dim,
-            critic_hidden_dim=cfg.network.critic_hidden_dim,
             gamma=cfg.rl.gamma,
             tau=cfg.rl.tau,
             actor_lr=cfg.rl.actor_lr,
@@ -185,7 +181,6 @@ def main(cfg: DictConfig) -> None:
             batch_size=cfg.batch_size,
             device=device,
             actor_hidden_dim=cfg.network.actor_hidden_dim,
-            critic_hidden_dim=cfg.network.critic_hidden_dim,
             gamma=cfg.rl.gamma,
             tau=cfg.rl.tau,
             actor_lr=cfg.rl.actor_lr,
@@ -209,7 +204,6 @@ def main(cfg: DictConfig) -> None:
             batch_size=cfg.batch_size,
             device=device,
             actor_hidden_dim=cfg.network.actor_hidden_dim,
-            critic_hidden_dim=cfg.network.critic_hidden_dim,
             gamma=cfg.rl.gamma,
             tau=cfg.rl.tau,
             mutation_std=cfg.evolution.mutation_std,

@@ -30,7 +30,6 @@ class EvolutionModule:
         num_offsprings: int,
         tournament_size: int = 3,
     ) -> list[int]:
-        """Conduct rank-based min-tournament selection on a sorted index list."""
         total_choices = len(ranked_indices)
         offsprings = []
         rng = np.random.default_rng()
@@ -48,7 +47,6 @@ class EvolutionModule:
         return offsprings
 
     def crossover_inplace(self, gene1: Actor, gene2: Actor) -> None:
-        """Conduct row-level parameter crossover in place on nn.Linear weights and biases."""
         rng = np.random.default_rng()
         for param1, param2 in zip(gene1.parameters(), gene2.parameters()):
             W1 = param1.data
@@ -83,7 +81,6 @@ class EvolutionModule:
         epochs: int = 12,
         batch_size: int = 128,
     ) -> None:
-        """Conduct Q-filtered distillation crossover to train the child network."""
         if len(replay_buffer) < batch_size:
             return
 
@@ -129,12 +126,6 @@ class EvolutionModule:
         mutation_fraction: float,
         rng: np.random.Generator,
     ) -> Actor:
-        """Mutate a deep copy of the parent using 3-strength fractional mutations.
-
-        Args:
-            mutation_fraction: Fraction of *weights* to mutate (default 0.1 = 10%).
-                               Separate from the per-individual mutation_prob used in evolve.
-        """
         child = copy.deepcopy(parent).to(self.device)
         flat_params = get_flat_params(child)
         noise = torch.zeros_like(flat_params)
@@ -147,7 +138,9 @@ class EvolutionModule:
         if mask.any():
             mutated_size = int(mask.sum().item())
             rands = rng.random(mutated_size)
-            noise_values = torch.zeros(mutated_size, device=flat_params.device, dtype=flat_params.dtype)
+            noise_values = torch.zeros(
+                mutated_size, device=flat_params.device, dtype=flat_params.dtype
+            )
             flat_params_mutated = flat_params[mask]
 
             # Super mutation (5% of mutated weights), Reset (5%), Normal mutation (90%)
@@ -160,14 +153,18 @@ class EvolutionModule:
                 normal_noise = torch.from_numpy(
                     rng.normal(0.0, mutation_std, size=int(normal_mut_mask.sum()))
                 ).to(flat_params.device, dtype=flat_params.dtype)
-                noise_values[normal_mut_mask] = normal_noise * flat_params_mutated[normal_mut_mask]
+                noise_values[normal_mut_mask] = (
+                    normal_noise * flat_params_mutated[normal_mut_mask]
+                )
 
             # 2. Super mutation: 10x strength, proportional to parameter magnitude W
             if np.any(super_mut_mask):
                 super_noise = torch.from_numpy(
                     rng.normal(0.0, 10.0 * mutation_std, size=int(super_mut_mask.sum()))
                 ).to(flat_params.device, dtype=flat_params.dtype)
-                noise_values[super_mut_mask] = super_noise * flat_params_mutated[super_mut_mask]
+                noise_values[super_mut_mask] = (
+                    super_noise * flat_params_mutated[super_mut_mask]
+                )
 
             # 3. Reset mutation: reset parameter to standard normal N(0, 1)
             if np.any(reset_mask):
@@ -177,7 +174,11 @@ class EvolutionModule:
                 noise_values[reset_mask] = reset_noise - flat_params_mutated[reset_mask]
 
             # Clamping parameters within hard limits to avoid explosion [-1e6, 1e6]
-            new_params = torch.clamp(flat_params + noise.index_copy(0, torch.where(mask)[0], noise_values), -1e6, 1e6)
+            new_params = torch.clamp(
+                flat_params + noise.index_copy(0, torch.where(mask)[0], noise_values),
+                -1e6,
+                1e6,
+            )
             set_flat_params(child, new_params, device=self.device)
         else:
             set_flat_params(child, flat_params, device=self.device)
@@ -196,13 +197,6 @@ class EvolutionModule:
         replay_buffer: Buffer | None = None,
         mutation_fraction: float = 0.1,
     ) -> tuple[list[Actor], list[int], list[int]]:
-        """Perform rank-based SSNE epoch matching the reference epoch() implementation.
-
-        Returns:
-            (new_population, new_elitists, unselect_indices) where new_elitists are the
-            target slots that received elite copies (protected from mutation), and
-            unselect_indices are the remaining non-offspring, non-elite slots after cloning.
-        """
         if not population:
             return population, [], []
 
@@ -228,7 +222,8 @@ class EvolutionModule:
 
         # Unselects = slots not in offspring AND not in elitist_index
         unselect_indices = [
-            i for i in range(pop_size)
+            i
+            for i in range(pop_size)
             if i not in offspring_indices and i not in elitist_index
         ]
         rng.shuffle(unselect_indices)
@@ -252,13 +247,25 @@ class EvolutionModule:
         # Crossover for remaining unselects: random new_elitist × random offspring
         if unselect_indices:
             if len(unselect_indices) % 2 != 0:
-                unselect_indices.append(unselect_indices[rng.integers(0, len(unselect_indices))])
+                unselect_indices.append(
+                    unselect_indices[rng.integers(0, len(unselect_indices))]
+                )
 
             for i, j in zip(unselect_indices[0::2], unselect_indices[1::2]):
-                parent1_idx = int(rng.choice(new_elitists)) if new_elitists else int(rng.choice(ranked_indices))
-                parent2_idx = int(rng.choice(offspring_indices)) if offspring_indices else int(rng.choice(ranked_indices))
+                parent1_idx = (
+                    int(rng.choice(new_elitists))
+                    if new_elitists
+                    else int(rng.choice(ranked_indices))
+                )
+                parent2_idx = (
+                    int(rng.choice(offspring_indices))
+                    if offspring_indices
+                    else int(rng.choice(ranked_indices))
+                )
 
-                new_population[i].load_state_dict(new_population[parent1_idx].state_dict())
+                new_population[i].load_state_dict(
+                    new_population[parent1_idx].state_dict()
+                )
                 new_population[j].load_state_dict(population[parent2_idx].state_dict())
 
                 if crossover_mode == "parameter":
@@ -266,26 +273,35 @@ class EvolutionModule:
                 elif crossover_mode == "distillation" and replay_buffer is not None:
                     self.distillation_crossover(
                         child=new_population[i],
-                        parent1=copy.deepcopy(new_population[parent1_idx]).to(self.device),
+                        parent1=copy.deepcopy(new_population[parent1_idx]).to(
+                            self.device
+                        ),
                         parent2=copy.deepcopy(population[parent2_idx]).to(self.device),
                         replay_buffer=replay_buffer,
                     )
                     self.distillation_crossover(
                         child=new_population[j],
                         parent1=copy.deepcopy(population[parent2_idx]).to(self.device),
-                        parent2=copy.deepcopy(new_population[parent1_idx]).to(self.device),
+                        parent2=copy.deepcopy(new_population[parent1_idx]).to(
+                            self.device
+                        ),
                         replay_buffer=replay_buffer,
                     )
 
         # Crossover for offsprings: pairs with crossover_prob
         if offspring_indices:
             if len(offspring_indices) % 2 != 0:
-                offspring_indices.append(offspring_indices[rng.integers(0, len(offspring_indices))])
+                offspring_indices.append(
+                    offspring_indices[rng.integers(0, len(offspring_indices))]
+                )
 
             for i, j in zip(offspring_indices[0::2], offspring_indices[1::2]):
                 if rng.random() < crossover_prob:
                     if crossover_mode == "parameter":
-                        self.crossover_inplace(new_population[i], new_population[j])
+                        self.crossover_inplace(
+                            new_population[i],
+                            new_population[j],
+                        )
                     elif crossover_mode == "distillation" and replay_buffer is not None:
                         parent1_copy = copy.deepcopy(new_population[i]).to(self.device)
                         parent2_copy = copy.deepcopy(new_population[j]).to(self.device)

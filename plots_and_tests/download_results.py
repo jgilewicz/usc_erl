@@ -126,7 +126,9 @@ def main():
         method = determine_method_from_run(run)
         if not env_id or seed is None or (not method):
             print(
-                f"Skipping run '{run.name}' (Unable to determine Env ID, Seed or Method)."
+                f"Skipping run '{
+                    run.name
+                }' (Unable to determine Env ID, Seed or Method)."
             )
             continue
         if env_id not in allowed_environments:

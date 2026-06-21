@@ -27,7 +27,6 @@ def ERL(
     batch_size: int = 64,
     device: torch.device = torch.device("cpu"),
     actor_hidden_dim: int = 256,
-    critic_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
     mutation_std: float = 0.05,
@@ -86,7 +85,6 @@ def ERL(
     critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
         activation="elu",
     ).to(device)
@@ -94,7 +92,6 @@ def ERL(
     target_critic = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
         activation="elu",
     ).to(device)

@@ -1,14 +1,12 @@
 # Evolutionary + Reinforcement Learning (SC-ERL)
 
-This repository contains implementations of hybrid evolutionary and reinforcement-learning algorithms, along with tools to run experiments and perform hyperparameter optimization using Optuna. The project originates from master's research and focuses on comparative experiments (ERL, SC-ERL, DDPG, TD3, PPO) and the study of predictive uncertainty methods (dropout, ensemble, evidential). The ERL baseline is configured with distilled crossover by default so the comparison reflects the newer distillation-based evolutionary variants rather than the older parameter-crossover setup.
+This repository contains implementations of hybrid evolutionary and reinforcement-learning algorithms, along with tools to run experiments. The project originates from master's research and focuses on comparative experiments (ERL, SC-ERL, DDPG, TD3, PPO) and the study of predictive uncertainty methods (dropout, ensemble, evidential). The ERL baseline is configured with distilled crossover by default so the comparison reflects the newer distillation-based evolutionary variants rather than the older parameter-crossover setup.
 
 Repository layout
 - `entry_point.py` — main Hydra-based training launcher.
 - `src/` — algorithm implementations, shared modules, surrogate controller, and utilities.
 - `configs/` — Hydra configuration files. Per-algorithm and per-environment YAMLs are stored under `configs/algorithm/`.
-- `src/optimization/optuna_tune.py` — runs a single Optuna study for one algorithm/environment.
-- `src/optimization/run_optuna_grid.py` — helper to run Optuna studies across algorithm/environment combinations.
-- `outputs/` — experiment outputs, best-params files and saved configs.
+- `outputs/` — experiment outputs and saved configs.
 
 Requirements
 - Python 3.10+ (recommended).
@@ -30,29 +28,17 @@ pip install -r requirements.txt
 task run ALGO=sc_erl CLI_ARGS="env.id=HalfCheetah-v5"
 ```
 
-3. Run an Optuna HPO study for a single algorithm/environment using the Taskfile (example for the SC-ERL evidential variant):
 
-```bash
-task tune ALGO=sc_erl CLI_ARGS="name=sc_erl_evidential env.id=FetchPush-v4 eval_env.id=FetchPush-v4"
-```
 
-4. Run the Optuna grid runner to execute multiple studies using the Taskfile:
-
-```bash
-task tune-all
-```
-
-Configuration and tuning
-- All configuration files are in `configs/`. When an Optuna study finishes, a per-environment algorithm config is saved into `configs/algorithm/<algo>/<algo>_<env>.yaml`.
-- Optuna settings (study name, `n_trials`, `storage`) are defined in `configs/tune.yaml` (for example `storage: "sqlite:///optuna_hpo.db"`).
+Configuration
+- All configuration files are in `configs/`. Per-algorithm and per-environment configuration files are loaded from `configs/algorithm/<algo>/`.
 - The ERL baseline uses distilled crossover by default, matching the newer evolutionary setup built around distilled crossover, proximal mutation, and individual-based control.
-- The SC-ERL family supports variants: `sc_erl`, `sc_erl_dropout`, `sc_erl_ensemble`, and `sc_erl_evidential`. During HPO the implementation uses parameter-freezing rules so that only variant-specific parameters are searched, and surrogate selection here uses only individual-based control methods.
+- The SC-ERL family supports variants: `sc_erl`, `sc_erl_dropout`, `sc_erl_ensemble`, and `sc_erl_evidential`.
 
 Outputs
-- Experiment artifacts and best-parameters are written to `outputs/` (e.g. `optuna_best_<algo>_<env>.yaml`).
+- Experiment artifacts are written to `outputs/`.
 
 Practical tips
-- Use short Optuna runs for validation (`n_trials=3`) before launching full studies.
 - Ensure adequate memory and GPU resources for long experiments.
 
 Support and next steps

@@ -88,8 +88,6 @@ class Buffer:
         }
 
     def sample_latest(self, batch_size: int = None) -> dict[str, torch.Tensor]:
-        if batch_size is None:
-            batch_size = self.batch_size
         return self.sample(batch_size=batch_size, latest=True)
 
     def __len__(self) -> int:

@@ -12,10 +12,9 @@ This repository implements a modular framework designed for deep reinforcement l
 magisterka_evo_rl/
 ├── entry_point.py                     # Main Hydra experiment launcher & device selection
 ├── pyproject.toml                     # Python 3.12 dependencies and uv environment configuration
-├── Taskfile.yml                       # CLI Automation task orchestrator (run, tune, report)
+├── Taskfile.yml                       # CLI Automation task orchestrator (run, report)
 ├── configs/                           # Hydra Configuration Tree
 │   ├── config.yaml                    # Global training, device, logging, and seed defaults
-│   ├── tune.yaml                      # Optuna hyperparameter tuning bounds and SQLite path
 │   └── algorithm/                     # Algorithm-specific default parameter structures
 │       ├── ddpg.yaml, ppo.yaml, td3.yaml, erl.yaml
 │       └── sc_erl.yaml                # Detailed surrogate parameters (beta, dropout_p, omega)
@@ -35,9 +34,6 @@ magisterka_evo_rl/
 │   │   ├── deep_modules.py            # Actor, Critic, StochasticActor, and Evidential architectures
 │   │   ├── ensemble_module.py         # Multi-critic ensemble with prediction standard deviation
 │   │   └── mc_dropout.py              # MC Dropout runner for epistemic variance estimation
-│   └── optimization/                  # Hyperparameter Optimization (HPO) pipeline
-│       ├── optuna_tune.py             # Sequential HPO study loop for Fetch environments
-│       └── run_optuna_grid.py         # Multiprocessing-compatible tuning runner across algos/envs
 └── plots_and_tests/                   # Post-processing, Analytics & Reporting
     ├── process_results.py             # Raw data compiler and curve generator
     ├── statistical_tests.py           # Welch's t-test, Shapiro-Wilk, and Mann-Whitney U suites
@@ -185,9 +181,7 @@ The repository uses `task` (Taskfile.yml) to manage execution steps:
 | Command | Description | Example |
 | :--- | :--- | :--- |
 | `task run` | Runs a single training experiment with Hydra arguments | `task run ALGO=sc_erl CLI_ARGS="env.id=HalfCheetah-v5 surrogate.mode=dropout"` |
-| `task tune` | Performs sequential Optuna tuning on the four Fetch environments | `task tune ALGO=sc_erl CLI_ARGS="surrogate.mode=dropout"` |
-| `task tune-all` | Run sequential HPO across all 5 algorithms and 4 environments | `task tune-all CLI_ARGS="n_steps=50000"` |
-| `task run-fetch-parallel` | Runs the full Fetch robotics grid (5 seeds, all algos/modes) concurrently | `task run-fetch-parallel` |
+| `task run-parallel` | Runs the full experiment matrix (5 seeds, all algos/modes, all 5 envs) in parallel | `task run-parallel` |
 | `task report` | Compiles raw WandB metrics, runs statistical tests, and generates reports | `task report` |
 | `task clean` | Wipes output directories, cached plots, hydra configurations, and reports | `task clean` |
 

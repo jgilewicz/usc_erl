@@ -1,3 +1,0 @@
-study_name: evo_rl_hpo
-n_trials: 15
-storage: "sqlite:///optuna_hpo.db"

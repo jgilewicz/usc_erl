@@ -22,7 +22,8 @@ def print_td3_debug_summary(
     print(f"[TD3] Steps {format_steps(total_steps)}")
     print(f"  Rewards     recent avg: {avg_reward:8.2f} | eval: {eval_reward:8.2f}")
     print(
-        f"  Optimization actor loss: {actor_loss:8.4f} | critic loss: {critic_loss:8.4f}"
+        f"  Optimization actor loss: {actor_loss:8.4f} | critic loss: {
+            critic_loss:8.4f}"
     )
     print()
 
@@ -37,7 +38,8 @@ def print_ddpg_debug_summary(
     print(f"[DDPG] Steps {format_steps(total_steps)}")
     print(f"  Rewards     recent avg: {avg_reward:8.2f} | eval: {eval_reward:8.2f}")
     print(
-        f"  Optimization actor loss: {actor_loss:8.4f} | critic loss: {critic_loss:8.4f}"
+        f"  Optimization actor loss: {actor_loss:8.4f} | critic loss: {
+            critic_loss:8.4f}"
     )
     print()
 
@@ -58,7 +60,8 @@ def print_erl_debug_summary(
         f"recent avg reward: {avg_reward:8.2f}"
     )
     print(
-        f"  Best pop reward  reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
+        f"  Best pop reward  reward: {eval_reward:8.2f} | actor loss: {
+            actor_loss:8.4f} | "
         f"critic loss: {critic_loss:8.4f}"
     )
     print()
@@ -87,7 +90,8 @@ def print_sc_erl_debug_summary(
         f"recent avg reward: {avg_reward:8.2f}"
     )
     print(
-        f"  Best pop reward  reward: {eval_reward:8.2f} | actor loss: {actor_loss:8.4f} | "
+        f"  Best pop reward  reward: {eval_reward:8.2f} | actor loss: {
+            actor_loss:8.4f} | "
         f"critic loss: {critic_loss:8.4f}"
     )
     print(f"  Evolution       steps: {format_steps(evo_steps)}")
@@ -98,12 +102,14 @@ def print_sc_erl_debug_summary(
         and uncertainty_threshold is not None
     ):
         print(
-            f"  CV uncertainty  mean: {uncertainty_mean:8.4f} | max: {uncertainty_max:8.4f} | "
+            f"  CV uncertainty  mean: {uncertainty_mean:8.4f} | max: {
+                uncertainty_max:8.4f} | "
             f"threshold: {uncertainty_threshold:8.4f}"
         )
         if raw_sigma_mean is not None and raw_sigma_max is not None:
             print(
-                f"  Raw sigma       mean: {raw_sigma_mean:8.4f} | max: {raw_sigma_max:8.4f}"
+                f"  Raw sigma       mean: {raw_sigma_mean:8.4f} | max: {
+                    raw_sigma_max:8.4f}"
             )
     print()
 

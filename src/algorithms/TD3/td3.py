@@ -25,7 +25,6 @@ def TD3(
     batch_size: int = 256,
     device: torch.device = torch.device("cpu"),
     actor_hidden_dim: int = 256,
-    critic_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
     actor_lr: float = 3e-4,
@@ -64,21 +63,18 @@ def TD3(
     critic_1 = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
 
     critic_2 = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
 
     critic_1_target = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
     critic_1_target.load_state_dict(critic_1.state_dict())
@@ -86,7 +82,6 @@ def TD3(
     critic_2_target = Critic(
         state_dim=state_dim,
         action_dim=action_dim,
-        hidden_dim=critic_hidden_dim,
         dropout=0.0,
     ).to(device)
     critic_2_target.load_state_dict(critic_2.state_dict())
