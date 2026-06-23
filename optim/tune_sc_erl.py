@@ -35,7 +35,8 @@ def patch_yaml(params: dict) -> str:
     cfg = yaml.safe_load(original)
     for dotted_key, value in params.items():
         _set_nested(cfg, dotted_key, value)
-    SC_ERL_CFG.write_text(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
+    dumped = yaml.dump(cfg, default_flow_style=False, sort_keys=False)
+    SC_ERL_CFG.write_text("# @package _global_\n" + dumped)
     return original
 
 

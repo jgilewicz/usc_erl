@@ -267,7 +267,8 @@ class SurrogateController:
             fitnesses = []
             steps = 0
             surrogate_count = 0
-            surrogate_scores_for_beta = []
+            mu_for_beta = []
+            sigma_for_beta = []
             real_scores_for_beta = []
 
             for i, policy in enumerate(population):
@@ -275,13 +276,14 @@ class SurrogateController:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     real_scores_for_beta.append(fit[0])
-                    surrogate_scores_for_beta.append(scaled_fitnesses[i])
+                    mu_for_beta.append(surrogate_fitnesses[i])
+                    sigma_for_beta.append(self.last_uncertainty[i])
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
                     surrogate_count += 1
 
-            self._update_beta(surrogate_scores_for_beta, real_scores_for_beta)
+            self._update_beta(mu_for_beta, sigma_for_beta, real_scores_for_beta)
             self.last_fitness = fitnesses
 
         elif self.surrogate_mode == SurrogateMode.ENSEMBLE:
@@ -324,7 +326,8 @@ class SurrogateController:
             fitnesses = []
             steps = 0
             surrogate_count = 0
-            surrogate_scores_for_beta = []
+            mu_for_beta = []
+            sigma_for_beta = []
             real_scores_for_beta = []
 
             for i, policy in enumerate(population):
@@ -332,13 +335,14 @@ class SurrogateController:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     real_scores_for_beta.append(fit[0])
-                    surrogate_scores_for_beta.append(scaled_fitnesses[i])
+                    mu_for_beta.append(surrogate_fitnesses[i])
+                    sigma_for_beta.append(uncertainties[i])
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
                     surrogate_count += 1
 
-            self._update_beta(surrogate_scores_for_beta, real_scores_for_beta)
+            self._update_beta(mu_for_beta, sigma_for_beta, real_scores_for_beta)
             self.last_fitness = fitnesses
 
         elif self.surrogate_mode == SurrogateMode.EVIDENTIAL:
@@ -386,7 +390,8 @@ class SurrogateController:
             fitnesses = []
             steps = 0
             surrogate_count = 0
-            surrogate_scores_for_beta = []
+            mu_for_beta = []
+            sigma_for_beta = []
             real_scores_for_beta = []
 
             for i, policy in enumerate(population):
@@ -394,13 +399,14 @@ class SurrogateController:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
                     real_scores_for_beta.append(fit[0])
-                    surrogate_scores_for_beta.append(scaled_fitnesses[i])
+                    mu_for_beta.append(surrogate_fitnesses[i])
+                    sigma_for_beta.append(uncertainties[i])
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
                     surrogate_count += 1
 
-            self._update_beta(surrogate_scores_for_beta, real_scores_for_beta)
+            self._update_beta(mu_for_beta, sigma_for_beta, real_scores_for_beta)
             self.last_fitness = fitnesses
 
         self.last_surrogate_ratio = (
@@ -526,14 +532,18 @@ class SurrogateController:
 
     def _update_beta(
         self,
-        surrogate_scores: list[float],
+        mu_scores: list[float],
+        sigma_scores: list[float],
         real_scores: list[float],
     ) -> None:
-        if len(surrogate_scores) < 2:
+        if len(mu_scores) < 2:
             return
-        s = torch.tensor(surrogate_scores, dtype=torch.float32)
-        r = torch.tensor(real_scores, dtype=torch.float32)
-        loss = torch.nn.functional.mse_loss(s, r)
+        mu = torch.tensor(mu_scores, dtype=torch.float32, device=self.device)
+        sigma = torch.tensor(sigma_scores, dtype=torch.float32, device=self.device)
+        r = torch.tensor(real_scores, dtype=torch.float32, device=self.device)
+        beta = torch.exp(self.adaptive_beta.log_beta)
+        predicted = mu - beta * sigma
+        loss = torch.nn.functional.mse_loss(predicted, r)
         self._beta_optimizer.zero_grad()
         loss.backward()
         self._beta_optimizer.step()

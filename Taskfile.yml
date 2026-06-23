@@ -5,7 +5,7 @@ version: '3'
 vars:
   ALGO: erl
   ENV: HalfCheetah-v5
-  MODE: random
+  MODE: dropout
   BACKBONE: td3
   N_TRIALS: "30"
   N_STEPS: "200000"
@@ -79,7 +79,7 @@ tasks:
         generate_commands | shuf | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/run_$$.out 2>&1'
 
   tune:
-    desc: "Run Optuna tuning for one mode. Stage 1: task tune MODE=random. Stage 2: task tune MODE=dropout BASE_STUDY=optuna_random_<env>.db"
+    desc: "Run Optuna tuning. Stage 1: task tune MODE=dropout. Stage 2: task tune MODE=evidential BASE_STUDY=optuna_dropout_<env>.db"
     cmds:
       - |
         BASE_STUDY_ARG=""
@@ -96,23 +96,23 @@ tasks:
           $BASE_STUDY_ARG
 
   tune-stage1:
-    desc: "Stage 1: tune shared + TD3 backbone params using random surrogate mode (e.g. task tune-stage1 ENV=Ant-v5)"
+    desc: "Stage 1: tune shared + backbone + dropout params (e.g. task tune-stage1 ENV=Ant-v5)"
     cmds:
-      - uv run python optim/tune_sc_erl.py --env {{.ENV}} --mode random --backbone {{.BACKBONE}} --n-trials {{.N_TRIALS}} --n-steps {{.N_STEPS}} --sampler {{.SAMPLER}}
+      - uv run python optim/tune_sc_erl.py --env {{.ENV}} --mode dropout --backbone {{.BACKBONE}} --n-trials {{.N_TRIALS}} --n-steps {{.N_STEPS}} --sampler {{.SAMPLER}}
 
   tune-stage2:
-    desc: "Stage 2: tune method-specific params for all three modes in parallel (requires BASE_STUDY=<stage1.db>)"
+    desc: "Stage 2: tune evidential + ensemble in parallel (requires BASE_STUDY=optuna_dropout_<env>.db)"
     vars:
-      PARALLEL: '{{default "3" .PARALLEL}}'
+      PARALLEL: '{{default "2" .PARALLEL}}'
     cmds:
       - |
         set -euo pipefail
         if [ -z "{{.BASE_STUDY}}" ]; then
-          echo "ERROR: BASE_STUDY is required for Stage 2. Example: task tune-stage2 BASE_STUDY=optuna_random_HalfCheetah-v5.db"
+          echo "ERROR: BASE_STUDY is required for Stage 2. Example: task tune-stage2 BASE_STUDY=optuna_dropout_HalfCheetah-v5.db"
           exit 1
         fi
         mkdir -p logs
-        for MODE in dropout ensemble evidential; do
+        for MODE in evidential ensemble; do
           echo "uv run python optim/tune_sc_erl.py \
             --env {{.ENV}} \
             --mode ${MODE} \
