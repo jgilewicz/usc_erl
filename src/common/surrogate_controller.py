@@ -7,6 +7,7 @@ import torch.nn as nn
 from common.reply_buffer import Buffer
 from common.utils import surrogate_fitness, rollout_policy
 from modules.mc_dropout_module import MCDropout
+from modules.deep_modules import AdaptiveBeta
 
 
 class SurrogateMode(Enum):
@@ -44,11 +45,11 @@ class SurrogateController:
         beta: float = 1.0,
         dropout_p: float = 0.2,
         mc_samples: int = 20,
-        min_uncertainty_floor: float = 0.01,
         epsilon: float = 0.10,
-        percentile: int = 75,
         crossover_prob: float = 0.0,
         crossover_mode: str = "none",
+        mad_k: float = 2.0,
+        beta_lr: float = 1e-3,
     ):
         self.evolution_module = evolution_module
         self.critic = critic
@@ -57,13 +58,16 @@ class SurrogateController:
         self.omega = omega
         self.rng = rng if rng is not None else np.random.default_rng()
         self.k = k
-        self.beta = beta
+        self.mad_k = mad_k
+
+        self.adaptive_beta = AdaptiveBeta(init_value=beta).to(device)
+        self._beta_optimizer = torch.optim.Adam(
+            self.adaptive_beta.parameters(), lr=beta_lr
+        )
 
         self.dropout_p = dropout_p
         self.mc_samples = mc_samples
-        self.min_uncertainty_floor = min_uncertainty_floor
         self.epsilon = epsilon
-        self.percentile = percentile
         self.crossover_prob = crossover_prob
         self.crossover_mode = crossover_mode
         self.last_fitness = []
@@ -81,15 +85,9 @@ class SurrogateController:
         self._running_real_min: float | None = None
         self._running_real_max: float | None = None
 
-        self.ema_cv_mean: float | None = None
-        self.ema_cv_std: float | None = None
-        self._uncertainty_ema_alpha: float = 0.2
-
-        # Tracking the best real-evaluated actor to ensure elite protection
         self.best_real_actor_state = None
         self.best_real_fitness = -float("inf")
 
-        # Updated each call to generation_based_control for use by callers
         self.last_elite_indices: list[int] = []
         self.last_unselect_indices: list[int] = []
         self.last_surrogate_ratio: float = 0.0
@@ -256,7 +254,11 @@ class SurrogateController:
                 mu_q = surrogate_fitnesses[i]
                 sigma_q = self.last_uncertainty[i]
                 lcb_q = float(
-                    np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None)
+                    np.clip(
+                        mu_q - self.adaptive_beta.beta * sigma_q,
+                        a_min=-5000.0,
+                        a_max=None,
+                    )
                 )
                 lcb_q_values.append(lcb_q)
 
@@ -265,16 +267,21 @@ class SurrogateController:
             fitnesses = []
             steps = 0
             surrogate_count = 0
+            surrogate_scores_for_beta = []
+            real_scores_for_beta = []
 
             for i, policy in enumerate(population):
                 if cv_values[i] > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
+                    real_scores_for_beta.append(fit[0])
+                    surrogate_scores_for_beta.append(scaled_fitnesses[i])
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
                     surrogate_count += 1
 
+            self._update_beta(surrogate_scores_for_beta, real_scores_for_beta)
             self.last_fitness = fitnesses
 
         elif self.surrogate_mode == SurrogateMode.ENSEMBLE:
@@ -304,7 +311,11 @@ class SurrogateController:
                 mu_q = surrogate_fitnesses[i]
                 sigma_q = self.last_uncertainty[i]
                 lcb_q = float(
-                    np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None)
+                    np.clip(
+                        mu_q - self.adaptive_beta.beta * sigma_q,
+                        a_min=-5000.0,
+                        a_max=None,
+                    )
                 )
                 lcb_q_values.append(lcb_q)
 
@@ -313,16 +324,21 @@ class SurrogateController:
             fitnesses = []
             steps = 0
             surrogate_count = 0
+            surrogate_scores_for_beta = []
+            real_scores_for_beta = []
 
             for i, policy in enumerate(population):
                 if cv_values[i] > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
+                    real_scores_for_beta.append(fit[0])
+                    surrogate_scores_for_beta.append(scaled_fitnesses[i])
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
                     surrogate_count += 1
 
+            self._update_beta(surrogate_scores_for_beta, real_scores_for_beta)
             self.last_fitness = fitnesses
 
         elif self.surrogate_mode == SurrogateMode.EVIDENTIAL:
@@ -357,7 +373,11 @@ class SurrogateController:
                 mu_q = surrogate_fitnesses[i]
                 sigma_q = self.last_uncertainty[i]
                 lcb_q = float(
-                    np.clip(mu_q - self.beta * sigma_q, a_min=-5000.0, a_max=None)
+                    np.clip(
+                        mu_q - self.adaptive_beta.beta * sigma_q,
+                        a_min=-5000.0,
+                        a_max=None,
+                    )
                 )
                 lcb_q_values.append(lcb_q)
 
@@ -366,16 +386,21 @@ class SurrogateController:
             fitnesses = []
             steps = 0
             surrogate_count = 0
+            surrogate_scores_for_beta = []
+            real_scores_for_beta = []
 
             for i, policy in enumerate(population):
                 if cv_values[i] > threshold or self.rng.random() < self.epsilon:
                     fit, s = self._real_evaluation([policy], env, evaluate_episodes)
                     fitnesses.append(fit[0])
+                    real_scores_for_beta.append(fit[0])
+                    surrogate_scores_for_beta.append(scaled_fitnesses[i])
                     steps += s
                 else:
                     fitnesses.append(scaled_fitnesses[i])
                     surrogate_count += 1
 
+            self._update_beta(surrogate_scores_for_beta, real_scores_for_beta)
             self.last_fitness = fitnesses
 
         self.last_surrogate_ratio = (
@@ -476,12 +501,14 @@ class SurrogateController:
             neginf=0.0,
         )
 
-        batch_mean = float(np.mean(cv_arr))
-        batch_std = float(np.std(cv_arr))
-        self.last_uncertainty_mean = batch_mean
-        self.last_uncertainty_max = float(np.max(cv_arr))
+        median = float(np.median(cv_arr))
+        mad = float(np.median(np.abs(cv_arr - median)))
+        threshold = median + self.mad_k * mad
 
-        # Raw sigma stats (absolute, before CV normalisation) for diagnostic logging
+        self.last_uncertainty_mean = float(np.mean(cv_arr))
+        self.last_uncertainty_max = float(np.max(cv_arr))
+        self.last_uncertainty_threshold = threshold
+
         if self.last_uncertainty:
             raw = np.nan_to_num(
                 np.array(self.last_uncertainty, dtype=np.float64),
@@ -495,18 +522,21 @@ class SurrogateController:
             self.last_raw_sigma_mean = 0.0
             self.last_raw_sigma_max = 0.0
 
-        alpha = self._uncertainty_ema_alpha
-        if self.ema_cv_mean is None:
-            self.ema_cv_mean = batch_mean
-            self.ema_cv_std = batch_std
-        else:
-            self.ema_cv_mean = alpha * batch_mean + (1 - alpha) * self.ema_cv_mean
-            self.ema_cv_std = alpha * batch_std + (1 - alpha) * self.ema_cv_std
-
-        threshold = self.ema_cv_mean + 1.5 * self.ema_cv_std
-        self.last_uncertainty_threshold = threshold
-
         return threshold
+
+    def _update_beta(
+        self,
+        surrogate_scores: list[float],
+        real_scores: list[float],
+    ) -> None:
+        if len(surrogate_scores) < 2:
+            return
+        s = torch.tensor(surrogate_scores, dtype=torch.float32)
+        r = torch.tensor(real_scores, dtype=torch.float32)
+        loss = torch.nn.functional.mse_loss(s, r)
+        self._beta_optimizer.zero_grad()
+        loss.backward()
+        self._beta_optimizer.step()
 
     def _normalize_surrogate_fitness(self, raw_fitnesses: list[float]) -> list[float]:
         alpha = self._fitness_ema_alpha

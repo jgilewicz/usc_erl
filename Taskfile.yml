@@ -4,6 +4,13 @@ version: '3'
 
 vars:
   ALGO: erl
+  ENV: HalfCheetah-v5
+  MODE: random
+  BACKBONE: td3
+  N_TRIALS: "30"
+  N_STEPS: "200000"
+  SAMPLER: tpe
+  BASE_STUDY: ""  # Stage 2 only: path to Stage 1 .db file
 
 tasks:
   default:
@@ -70,6 +77,51 @@ tasks:
         }
 
         generate_commands | shuf | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/run_$$.out 2>&1'
+
+  tune:
+    desc: "Run Optuna tuning for one mode. Stage 1: task tune MODE=random. Stage 2: task tune MODE=dropout BASE_STUDY=optuna_random_<env>.db"
+    cmds:
+      - |
+        BASE_STUDY_ARG=""
+        if [ -n "{{.BASE_STUDY}}" ]; then
+          BASE_STUDY_ARG="--base-study {{.BASE_STUDY}}"
+        fi
+        uv run python optim/tune_sc_erl.py \
+          --env {{.ENV}} \
+          --mode {{.MODE}} \
+          --backbone {{.BACKBONE}} \
+          --n-trials {{.N_TRIALS}} \
+          --n-steps {{.N_STEPS}} \
+          --sampler {{.SAMPLER}} \
+          $BASE_STUDY_ARG
+
+  tune-stage1:
+    desc: "Stage 1: tune shared + TD3 backbone params using random surrogate mode (e.g. task tune-stage1 ENV=Ant-v5)"
+    cmds:
+      - uv run python optim/tune_sc_erl.py --env {{.ENV}} --mode random --backbone {{.BACKBONE}} --n-trials {{.N_TRIALS}} --n-steps {{.N_STEPS}} --sampler {{.SAMPLER}}
+
+  tune-stage2:
+    desc: "Stage 2: tune method-specific params for all three modes in parallel (requires BASE_STUDY=<stage1.db>)"
+    vars:
+      PARALLEL: '{{default "3" .PARALLEL}}'
+    cmds:
+      - |
+        set -euo pipefail
+        if [ -z "{{.BASE_STUDY}}" ]; then
+          echo "ERROR: BASE_STUDY is required for Stage 2. Example: task tune-stage2 BASE_STUDY=optuna_random_HalfCheetah-v5.db"
+          exit 1
+        fi
+        mkdir -p logs
+        for MODE in dropout ensemble evidential; do
+          echo "uv run python optim/tune_sc_erl.py \
+            --env {{.ENV}} \
+            --mode ${MODE} \
+            --backbone {{.BACKBONE}} \
+            --n-trials {{.N_TRIALS}} \
+            --n-steps {{.N_STEPS}} \
+            --sampler {{.SAMPLER}} \
+            --base-study {{.BASE_STUDY}}"
+        done | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/tune_$$.out 2>&1'
 
   clean:
     desc: "Clean outputs, Hydra logs, training results, downloaded metrics, and compiled reports"

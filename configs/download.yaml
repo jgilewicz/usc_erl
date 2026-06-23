@@ -1,6 +1,6 @@
 wandb:
   entity: evo_rl
-  project: PHOENIX
+  project: ue_evo_rl_2
 
 algorithms:
   - sc_erl_evidential
@@ -17,3 +17,5 @@ environments:
   - Walker2d-v5
   - Ant-v5
   - Swimmer-v5
+  - HalfCheetah-v5
+

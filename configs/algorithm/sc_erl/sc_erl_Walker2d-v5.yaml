@@ -3,3 +3,8 @@ evolution:
   elite_ratio: 0.2
   rl_injection_interval: 1
   eval_trials: 5
+surrogate:
+  epsilon: 0.03
+  mad_k: 2.5
+warmup:
+  warmup_steps: 25000

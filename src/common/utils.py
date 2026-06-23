@@ -163,12 +163,10 @@ def evidential_loss(
 ) -> torch.Tensor:
 
     # 1. Negative Log-Likelihood (NLL)
-    # alpha comes from softplus + 1 + eps — unbounded above.
-    # lgamma overflows float32 to inf for alpha >> 1; cap here to keep it finite.
+    # clamp alpha to avoid lgamma overflow in float32
     alpha_safe = alpha.clamp(max=1e4)
 
-    # beta and v are floored by EvidentialModule (_EPS=1e-4), but clamp defensively
-    # before log to guard against any upstream numerical drift.
+    # clamp denominator to guard against upstream numerical drift
     twoB_1_v = (2 * beta * (1 + v)).clamp(min=1e-8)
     error = y_true - mu
 

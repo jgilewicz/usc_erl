@@ -216,7 +216,9 @@ def ERL(
                 )
 
         if generation % rl_injection_interval == 0:
-            evolution_module.sync_rl_to_pop(actor, population, fitnesses, elite_indices, unselect_indices)
+            evolution_module.sync_rl_to_pop(
+                actor, population, fitnesses, elite_indices, unselect_indices
+            )
 
         avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
         best_fitness = max(fitnesses) if fitnesses else 0.0

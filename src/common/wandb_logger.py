@@ -5,6 +5,7 @@ import wandb
 from omegaconf import DictConfig
 from dotenv import load_dotenv
 
+
 class WandbLogger:
     def __init__(
         self,

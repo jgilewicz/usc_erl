@@ -1,5 +1,6 @@
 # @package _global_
 name: sc_erl
+backbone: ddpg
 
 buffer_size: 1000000
 n_steps: 1000000
@@ -11,12 +12,15 @@ network:
 
 rl:
   gamma: 0.99
-  tau: 0.001
+  tau: 0.005
   actor_lr: 3e-4
   critic_lr: 3e-4
   exploration_noise_std: 0.1
   gradient_steps: 1
   frac_frames_train: 1.0
+  policy_delay: 2
+  policy_noise: 0.2
+  noise_clip: 0.5
 
 evolution:
   population_size: 10
@@ -26,22 +30,22 @@ evolution:
   elite_ratio: 0.1
   rl_injection_interval: 10
   crossover_prob: 0.5
-  crossover_mode: distillation  # Options: parameter, distillation, none
+  crossover_mode: distillation
   eval_trials: 1
 
 surrogate:
   enabled: true
   omega: 0.6
-  k: 8000
+  k: 4096
   k_ensembles: 5
-  mode: dropout  # Options: random, dropout, ensemble, evidential
+  mode: dropout
   beta: 1.0
   dropout_p: 0.1
   mc_samples: 20
-  min_uncertainty_floor: 0.01
-  percentile: 75
   epsilon: 0.05
   lam: 0.1
+  mad_k: 2.0
+  beta_lr: 1e-3
 
 warmup:
-  warmup_steps: 50000
+  warmup_steps: 25000

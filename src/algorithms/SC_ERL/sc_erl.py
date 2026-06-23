@@ -13,6 +13,9 @@ from common.utils import (
     evaluate_policy,
     print_sc_erl_debug_summary,
     rollout_policy,
+    soft_update,
+    td3_train_critics,
+    td3_update_actor,
     train_actor_step,
     train_critic_step,
     warmup,
@@ -55,11 +58,15 @@ def SC_ERL(
     grad_clip_norm: float = 1.0,
     dropout_p: float = 0.2,
     mc_samples: int = 20,
-    min_uncertainty_floor: float = 0.01,
     epsilon: float = 0.10,
-    percentile: int = 75,
     lam: float = 0.1,
     mutation_fraction: float = 0.1,
+    mad_k: float = 2.0,
+    beta_lr: float = 1e-3,
+    backbone: str = "ddpg",  # "ddpg" or "td3"
+    policy_delay: int = 2,  # TD3 only
+    policy_noise: float = 0.2,  # TD3 only
+    noise_clip: float = 0.5,  # TD3 only
 ) -> float:
 
     state_dim = env.observation_space.shape[0]
@@ -110,6 +117,28 @@ def SC_ERL(
     ).to(device)
 
     target_critic.load_state_dict(critic.state_dict())
+
+    # TODO: consider passing |Q1 - Q2| disagreement as epistemic uncertainty signal to SurrogateController
+    critic_2: Critic | None = None
+    critic_2_target: Critic | None = None
+    critic_2_optimizer = None
+    if backbone == "td3":
+        critic_2 = Critic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            dropout=0.0,
+            activation="elu",
+        ).to(device)
+        critic_2_target = Critic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            dropout=0.0,
+            activation="elu",
+        ).to(device)
+        critic_2_target.load_state_dict(critic_2.state_dict())
+        critic_2_optimizer = torch.optim.Adam(
+            critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
+        )
 
     if surrogate_mode == SurrogateMode.ENSEMBLE:
         critic = EnsembleModule(
@@ -172,11 +201,11 @@ def SC_ERL(
         beta=beta,
         dropout_p=dropout_p,
         mc_samples=mc_samples,
-        min_uncertainty_floor=min_uncertainty_floor,
         epsilon=epsilon,
-        percentile=percentile,
         crossover_prob=crossover_prob,
         crossover_mode=crossover_mode,
+        mad_k=mad_k,
+        beta_lr=beta_lr,
     )
 
     total_steps = warmup(env, replay_buffer, warmup_steps=warmup_steps)
@@ -244,29 +273,60 @@ def SC_ERL(
                 if frac_frames_train > 0.0
                 else gradient_steps
             )
-            for _ in range(num_updates):
-                critic_loss = train_critic_step(
-                    target_actor=target_actor,
-                    critic=critic,
-                    target_critic=target_critic,
-                    critic_optimizer=critic_optimizer,
-                    replay_buffer=replay_buffer,
-                    batch_size=batch_size,
-                    gamma=gamma,
-                    tau=tau,
-                    grad_clip_norm=grad_clip_norm,
-                )
-
-                actor_loss = train_actor_step(
-                    actor=actor,
-                    target_actor=target_actor,
-                    critic=critic,
-                    actor_optimizer=actor_optimizer,
-                    replay_buffer=replay_buffer,
-                    batch_size=batch_size,
-                    tau=tau,
-                    grad_clip_norm=grad_clip_norm,
-                )
+            for update_idx in range(num_updates):
+                if backbone == "td3":
+                    critic_loss = td3_train_critics(
+                        actor_target=target_actor,
+                        critic_1=critic,
+                        critic_2=critic_2,
+                        critic_1_target=target_critic,
+                        critic_2_target=critic_2_target,
+                        critic_1_optimizer=critic_optimizer,
+                        critic_2_optimizer=critic_2_optimizer,
+                        replay_buffer=replay_buffer,
+                        batch_size=batch_size,
+                        gamma=gamma,
+                        policy_noise=policy_noise,
+                        noise_clip=noise_clip,
+                        action_limit=action_limit,
+                        device=device,
+                        grad_clip_norm=grad_clip_norm,
+                    )
+                    if update_idx % policy_delay == 0:
+                        actor_loss = td3_update_actor(
+                            actor=actor,
+                            critic_1=critic,
+                            actor_optimizer=actor_optimizer,
+                            replay_buffer=replay_buffer,
+                            batch_size=batch_size,
+                            device=device,
+                            grad_clip_norm=grad_clip_norm,
+                        )
+                        soft_update(target_critic, critic, tau=tau)
+                        soft_update(critic_2_target, critic_2, tau=tau)
+                        soft_update(target_actor, actor, tau=tau)
+                else:
+                    critic_loss = train_critic_step(
+                        target_actor=target_actor,
+                        critic=critic,
+                        target_critic=target_critic,
+                        critic_optimizer=critic_optimizer,
+                        replay_buffer=replay_buffer,
+                        batch_size=batch_size,
+                        gamma=gamma,
+                        tau=tau,
+                        grad_clip_norm=grad_clip_norm,
+                    )
+                    actor_loss = train_actor_step(
+                        actor=actor,
+                        target_actor=target_actor,
+                        critic=critic,
+                        actor_optimizer=actor_optimizer,
+                        replay_buffer=replay_buffer,
+                        batch_size=batch_size,
+                        tau=tau,
+                        grad_clip_norm=grad_clip_norm,
+                    )
 
         if used_real_eval and generation % rl_injection_interval == 0:
             evolution_module.sync_rl_to_pop(
@@ -296,24 +356,29 @@ def SC_ERL(
                     critic_loss=critic_loss,
                     uncertainty_mean=(
                         surrogate_controller.last_uncertainty_mean
-                        if _is_uncertainty_mode else None
+                        if _is_uncertainty_mode
+                        else None
                     ),
                     uncertainty_max=(
                         surrogate_controller.last_uncertainty_max
-                        if _is_uncertainty_mode else None
+                        if _is_uncertainty_mode
+                        else None
                     ),
                     uncertainty_threshold=(
                         surrogate_controller.last_uncertainty_threshold
-                        if _is_uncertainty_mode else None
+                        if _is_uncertainty_mode
+                        else None
                     ),
                     surrogate_mode=surrogate_mode.name.lower(),
                     raw_sigma_mean=(
                         surrogate_controller.last_raw_sigma_mean
-                        if _is_uncertainty_mode else None
+                        if _is_uncertainty_mode
+                        else None
                     ),
                     raw_sigma_max=(
                         surrogate_controller.last_raw_sigma_max
-                        if _is_uncertainty_mode else None
+                        if _is_uncertainty_mode
+                        else None
                     ),
                 )
 

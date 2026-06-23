@@ -15,3 +15,4 @@ wandb:
   entity: evo_rl
   name: null
   tags: []
+result_file: null  # path to write {"eval_reward": float} after training; used by tune_sc_erl.py

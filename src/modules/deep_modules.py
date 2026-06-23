@@ -174,3 +174,13 @@ class EvidentialCritic(nn.Module):
         x = self.net(x)
 
         return self.evidential_output(x)
+
+
+class AdaptiveBeta(nn.Module):
+    def __init__(self, init_value: float = 1.0):
+        super().__init__()
+        self.log_beta = nn.Parameter(torch.tensor(float(init_value)).log())
+
+    @property
+    def beta(self) -> float:
+        return float(torch.exp(self.log_beta).item())

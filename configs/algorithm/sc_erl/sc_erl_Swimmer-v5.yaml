@@ -3,3 +3,6 @@ evolution:
   elite_ratio: 0.1
   rl_injection_interval: 10
   eval_trials: 1
+surrogate:
+  epsilon: 0.5
+  mad_k: 0.5

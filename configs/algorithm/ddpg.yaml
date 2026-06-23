@@ -21,4 +21,4 @@ evaluation:
   eval_interval: 5000
 
 warmup:
-  warmup_steps: 50000
+  warmup_steps: 25000

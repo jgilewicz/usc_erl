@@ -47,31 +47,7 @@ def load_environment_specific_algorithm_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def make_env(env_id: str) -> gym.Env:
-    is_metaworld = False
-    mw_env_id = env_id
-
-    if env_id.endswith("-v2"):
-        mw_env_id = env_id.replace("-v2", "-v3-goal-observable")
-        try:
-            import metaworld
-
-            if mw_env_id in metaworld.ALL_V3_ENVIRONMENTS_GOAL_OBSERVABLE:
-                is_metaworld = True
-        except ImportError:
-            pass
-
-    if is_metaworld:
-        import metaworld
-
-        env_cls = metaworld.ALL_V3_ENVIRONMENTS_GOAL_OBSERVABLE[mw_env_id]
-        env = env_cls()
-        env._freeze_rand_vec = False
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=500)
-    else:
-        env = gym.make(env_id)
-
-
-
+    env = gym.make(env_id)
     if isinstance(env.observation_space, gym.spaces.Dict):
         env = gym.wrappers.FlattenObservation(env)
     return env
@@ -114,8 +90,10 @@ def main(cfg: DictConfig) -> None:
         )
 
 
+    result = None
+
     if cfg.name == "erl":
-        ERL(
+        result = ERL(
             population_size=cfg.evolution.population_size,
             buffer_size=cfg.buffer_size,
             rng=np.random.default_rng(seed=cfg.seed),
@@ -147,7 +125,7 @@ def main(cfg: DictConfig) -> None:
             mutation_fraction=cfg.evolution.mutation_fraction,
         )
     elif cfg.name == "td3":
-        TD3(
+        result = TD3(
             buffer_size=cfg.buffer_size,
             rng=np.random.default_rng(seed=cfg.seed),
             env=make_env(cfg.env.id),
@@ -172,7 +150,7 @@ def main(cfg: DictConfig) -> None:
             grad_clip_norm=cfg.grad_clip_norm,
         )
     elif cfg.name == "ddpg":
-        DDPG(
+        result = DDPG(
             buffer_size=cfg.buffer_size,
             rng=np.random.default_rng(seed=cfg.seed),
             env=make_env(cfg.env.id),
@@ -194,7 +172,7 @@ def main(cfg: DictConfig) -> None:
             grad_clip_norm=cfg.grad_clip_norm,
         )
     elif cfg.name == "sc_erl":
-        SC_ERL(
+        result = SC_ERL(
             population_size=cfg.evolution.population_size,
             buffer_size=cfg.buffer_size,
             rng=np.random.default_rng(seed=cfg.seed),
@@ -229,11 +207,16 @@ def main(cfg: DictConfig) -> None:
             grad_clip_norm=cfg.grad_clip_norm,
             dropout_p=cfg.surrogate.dropout_p,
             mc_samples=cfg.surrogate.mc_samples,
-            min_uncertainty_floor=cfg.surrogate.min_uncertainty_floor,
             mutation_fraction=cfg.evolution.mutation_fraction,
+            backbone=cfg.backbone,
+            policy_delay=cfg.rl.policy_delay,
+            policy_noise=cfg.rl.policy_noise,
+            noise_clip=cfg.rl.noise_clip,
+            mad_k=cfg.surrogate.mad_k,
+            beta_lr=cfg.surrogate.beta_lr,
         )
     elif cfg.name == "ppo":
-        PPO(
+        result = PPO(
             env=make_env(cfg.env.id),
             eval_env=make_env(cfg.eval_env.id),
             n_steps=cfg.n_steps,
@@ -257,6 +240,12 @@ def main(cfg: DictConfig) -> None:
         )
     else:
         raise ValueError(f"Unknown algorithm: {cfg.name}")
+
+    if cfg.get("result_file") and result is not None:
+        import json
+        import pathlib
+        pathlib.Path(cfg.result_file).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(cfg.result_file).write_text(json.dumps({"eval_reward": result}))
 
     if logger is not None:
         logger.finish()
