@@ -72,7 +72,7 @@ else
 fi
 
 export WANDB_MODE="disabled"
-export LD_LIBRARY_PATH="${PROJECT_DIR}/.venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH=$(find ${PROJECT_DIR}/.venv/lib/python3.12/site-packages/nvidia -name "lib" -type d | tr '\n' ':')${LD_LIBRARY_PATH:-}
 mkdir -p logs outputs/optuna
 
 BASE_STUDY_ARG=""

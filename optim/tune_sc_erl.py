@@ -91,6 +91,51 @@ def load_base_params(base_study_path: str) -> dict:
     return {k: v for k, v in all_params.items() if k in SHARED_PARAM_KEYS}
 
 
+ENV_CFG_DIR = pathlib.Path("configs/algorithm/sc_erl")
+
+PER_ENV_KEYS = {
+    "surrogate.beta",
+    "surrogate.omega",
+    "surrogate.k",
+    "surrogate.epsilon",
+    "surrogate.mad_k",
+    "rl.policy_noise",
+    "rl.noise_clip",
+    "rl.policy_delay",
+    "surrogate.dropout_p",
+    "surrogate.mc_samples",
+    "surrogate.k_ensembles",
+    "surrogate.lam",
+}
+
+
+def save_best_params_to_env_cfg(env: str, mode: str, best_params: dict) -> None:
+    ENV_CFG_DIR.mkdir(parents=True, exist_ok=True)
+    cfg_path = ENV_CFG_DIR / f"sc_erl_{env}.yaml"
+
+    if cfg_path.exists():
+        existing = yaml.safe_load(cfg_path.read_text()) or {}
+    else:
+        existing = {}
+
+    relevant = {k: v for k, v in best_params.items() if k in PER_ENV_KEYS}
+
+    for dotted_key, value in relevant.items():
+        keys = dotted_key.split(".")
+        node = existing
+        for k in keys[:-1]:
+            if k not in node or not isinstance(node[k], dict):
+                node[k] = {}
+            node = node[k]
+        node[keys[-1]] = value
+
+    content = "# @package _global_\n" + yaml.dump(
+        existing, default_flow_style=False, sort_keys=False
+    )
+    cfg_path.write_text(content)
+    print(f"Saved best params for {env} ({mode}) → {cfg_path}")
+
+
 def make_objective(env: str, mode: str, backbone: str, n_steps: int, seed: int,
                    base_params: dict | None):
     def objective(trial: optuna.Trial) -> float:
@@ -271,6 +316,8 @@ def main():
     for k, v in sorted(best.params.items()):
         print(f"  {k:<{col_w}}  {v}")
     print()
+
+    save_best_params_to_env_cfg(args.env, args.mode, best.params)
 
 
 if __name__ == "__main__":

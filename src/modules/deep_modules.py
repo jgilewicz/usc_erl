@@ -156,13 +156,16 @@ class EvidentialCritic(nn.Module):
 
         self.state_net = nn.Sequential(
             nn.Linear(state_dim, dim1),
+            nn.LayerNorm(dim1),
             nn.ReLU(),
         )
 
         self.net = nn.Sequential(
             nn.Linear(dim1 + action_dim, dim2),
+            nn.LayerNorm(dim2),
             nn.ReLU(),
             nn.Linear(dim2, dim2),
+            nn.LayerNorm(dim2),
             nn.ReLU(),
         )
 
