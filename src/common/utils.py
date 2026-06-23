@@ -8,6 +8,11 @@ from modules.deep_modules import Actor, Critic
 import math
 
 
+def _unwrap_q(output) -> torch.Tensor:
+    # EnsembleModule returns (mean_q, std_q); plain Critic returns a tensor
+    return output[0] if isinstance(output, tuple) else output
+
+
 def format_steps(value: int) -> str:
     return f"{value:,}"
 
@@ -443,14 +448,14 @@ def td3_train_critics(
             -action_limit, action_limit
         )
 
-        target_q1 = critic_1_target(next_state, next_action)
-        target_q2 = critic_2_target(next_state, next_action)
+        target_q1 = _unwrap_q(critic_1_target(next_state, next_action))
+        target_q2 = _unwrap_q(critic_2_target(next_state, next_action))
         target_q = torch.min(target_q1, target_q2)
 
         target = reward + (1.0 - done) * gamma * target_q
 
-    current_q1 = critic_1(state, action)
-    current_q2 = critic_2(state, action)
+    current_q1 = _unwrap_q(critic_1(state, action))
+    current_q2 = _unwrap_q(critic_2(state, action))
     critic_loss = F.mse_loss(current_q1, target) + F.mse_loss(current_q2, target)
 
     critic_1_optimizer.zero_grad()
@@ -476,7 +481,7 @@ def td3_update_actor(
     batch = replay_buffer.sample(batch_size)
     state = batch["state"].to(device)
 
-    actor_loss = -critic_1(state, actor(state)).mean()
+    actor_loss = -_unwrap_q(critic_1(state, actor(state))).mean()
 
     actor_optimizer.zero_grad()
     actor_loss.backward()
