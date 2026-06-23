@@ -1,13 +1,7 @@
 #!/bin/bash
 
-# =============================================================================
-# SC-ERL MuJoCo Experiment Matrix — SLURM Array Job (Single Env Mode)
-# =============================================================================
 # Matrix for ONE environment: 8 algorithms × 5 seeds = 40 runs
-#
-# Execution (default Ant-v5):
-#   sbatch --array=0-39 slurm_run_array.sh
-# =============================================================================
+#   TARGET_ENV=HalfCheetah-v5 sbatch --array=0-39 slurm_run_array.sh
 
 #SBATCH -N 1                            # 1 node
 #SBATCH -c 4                            # 4 CPU cores
@@ -20,14 +14,8 @@
 #SBATCH --error=logs/slurm-%A_%a.err    # Error log
 #SBATCH --mail-type=FAIL                # Email on failure
 
-# ==========================================
-# Dynamic environment selection
-# ==========================================
 ENV="${TARGET_ENV:-Ant-v5}"
 
-# ==========================================
-# Define algorithms and seeds (8 * 5 = 40 combinations)
-# ==========================================
 ALGORITHMS=(
   "sc_erl:dropout"    # 0..4
   "sc_erl:ensemble"   # 5..9
@@ -53,9 +41,6 @@ SURROGATE_MODE="${ALGO_MODE##*:}"
 
 SEED="${SEEDS[$SEED_IDX]}"
 
-# ==========================================
-# Build run name and WandB tags
-# ==========================================
 if [[ -n "$SURROGATE_MODE" ]]; then
   RUN_NAME="${ALGO}_${SURROGATE_MODE}_${ENV}_seed${SEED}"
   WANDB_TAGS="[MuJoCo,${ALGO},${SURROGATE_MODE}]"
@@ -66,32 +51,17 @@ else
   SURROGATE_ARG=""
 fi
 
-# ==========================================
-# Execution environment setup
-# ==========================================
-echo "=========================================="
-echo " SC-ERL SLURM Array Job (.venv mode)"
-echo "=========================================="
-echo " Task ID   : ${TASK_ID}"
-echo " Algorithm : ${ALGO}"
-echo " Mode      : ${SURROGATE_MODE:-N/A}"
-echo " Env       : ${ENV}"
-echo " Seed      : ${SEED}"
-echo " Run Name  : ${RUN_NAME}"
-echo "=========================================="
+echo "Task ${TASK_ID} | ${ALGO} ${SURROGATE_MODE:-N/A} | ${ENV} | seed ${SEED}"
 
-# Load system modules
 source /usr/local/sbin/modules.sh
 module load Python/3.12.3-GCCcore-13.3.0
 
-# Navigate to project directory
 PROJECT_DIR="/home/jakgil6519/workspace/ue_evo_rl"
 cd "${PROJECT_DIR}" || {
   echo "ERROR: Cannot navigate to ${PROJECT_DIR}"
   exit 1
 }
 
-# Activate local .venv environment
 if [ -d ".venv" ]; then
   source .venv/bin/activate
 else
@@ -99,23 +69,10 @@ else
   exit 1
 fi
 
-# ==========================================
-# WandB Configuration (Offline mode)
-# ==========================================
 export WANDB_API_KEY="INSERT_YOUR_WANDB_API_KEY_HERE"
 export WANDB_MODE="offline"
-
-# Local directory for WandB logs to avoid NFS issues
 export WANDB_DIR="${PROJECT_DIR}/wandb_logs"
-
-# Create necessary directory structures
-mkdir -p logs
-mkdir -p "${WANDB_DIR}"
-
-# ==========================================
-# Run the experiment
-# ==========================================
-echo "Running python entry_point.py..."
+mkdir -p logs "${WANDB_DIR}"
 
 python entry_point.py \
   algorithm="${ALGO}" \
@@ -131,9 +88,6 @@ python entry_point.py \
 
 EXIT_CODE=$?
 
-# ==========================================
-# Sync WandB logs after training
-# ==========================================
 if [[ $EXIT_CODE -eq 0 ]]; then
   echo "Training completed. Syncing WandB logs..."
   for d in "${WANDB_DIR}/wandb/offline-run-"*; do

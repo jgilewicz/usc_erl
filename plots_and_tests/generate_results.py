@@ -7,9 +7,6 @@ import pandas as pd
 import seaborn as sns
 import scipy.stats as stats
 
-# ==========================================
-# CONSTANTS & STYLING CONFIGURATION
-# ==========================================
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(
     {
@@ -34,7 +31,6 @@ def normalize_env_id(env_id):
 
 
 def get_env_file_variants(env_id):
-    """For Walker environments return both Walker2d-vX and Walker-vX filenames."""
     if not re.search(r"(?i)walker", env_id):
         return [env_id]
     canonical = re.sub(r"(?i)walker(?:2d)?", "Walker2d", env_id)
@@ -67,9 +63,6 @@ METHOD_LABELS = {
 PROPOSED_METHODS = ["sc_erl_ensemble", "sc_erl_dropout", "sc_erl_evidential"]
 
 
-# ==========================================
-# DATA LOADING & CLEANING
-# ==========================================
 def parse_column_header(col_name, env_id):
     pattern = f"^([a-z_0-9]+)_{re.escape(env_id)}_seed(\\d+)\\s*-\\s*([a-z_]+)$"
     match = re.match(pattern, col_name)
@@ -211,9 +204,6 @@ def get_stable_final_values(merged_data):
     return stable_values
 
 
-# ==========================================
-# PLOT GENERATION FUNCTIONS (WITH SAFE GUARDS)
-# ==========================================
 def generate_sample_efficiency_plot(env_id, merged_data, out_path):
     fig, ax = plt.subplots(figsize=(8.5, 5.5))
     ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
@@ -519,7 +509,6 @@ def generate_critic_correlation_plot(env_id, base_dir, out_path):
 
 
 def generate_speedup_plot(env_id, merged_data, out_path):
-    """Generations reached vs. environmental steps — proves surrogate compression."""
     evo_methods = [
         m
         for m in merged_data
@@ -616,7 +605,6 @@ def generate_speedup_plot(env_id, merged_data, out_path):
 
 
 def generate_ratio_plot(env_id, merged_data, out_path):
-    """Surrogate ratio over generations — shows epistemic breathing vs. flat random."""
     ratio_methods = [
         m
         for m in [
@@ -708,9 +696,6 @@ def generate_ratio_plot(env_id, merged_data, out_path):
     plt.close()
 
 
-# ==========================================
-# LATEX GENERATION STRATEGIES
-# ==========================================
 def build_summary_table_latex(env_id, base_dir="."):
     summary_path = os.path.join(base_dir, "summary", f"{env_id}.csv")
     if not os.path.exists(summary_path):
@@ -869,9 +854,6 @@ def build_correlation_table_latex(env_id, corr_data):
     return tex
 
 
-# ==========================================
-# NEMENYI RANKING ANALYSIS
-# ==========================================
 
 # Critical values q_alpha for Nemenyi test, alpha=0.05 (two-tailed)
 _NEMENYI_Q = {
@@ -888,20 +870,6 @@ _NEMENYI_Q = {
 
 
 def compute_rankings_and_nemenyi(all_stable_values, environments):
-    """Rank methods within each environment and run Friedman + Nemenyi tests.
-
-    Parameters
-    ----------
-    all_stable_values : dict[env_id, dict[method, list[float]]]
-    environments      : list[str]
-
-    Returns
-    -------
-    rank_matrix  : dict[method, dict[env_id, int]]   1 = best
-    avg_ranks    : dict[method, float]
-    cd           : float | None    Nemenyi critical difference at alpha=0.05
-    friedman_p   : float | None
-    """
     methods = sorted({m for sv in all_stable_values.values() for m in sv})
     rank_matrix = {m: {} for m in methods}
 
@@ -1010,7 +978,6 @@ def build_nemenyi_ranking_table_latex(all_stable_values, environments):
 
 
 def generate_nemenyi_cd_plot(avg_ranks, cd, out_path):
-    """Horizontal CD diagram: methods ranked left-to-right, CD bracket shown."""
     present = {m: r for m, r in avg_ranks.items() if not np.isnan(r)}
     if not present:
         return
@@ -1083,9 +1050,6 @@ def generate_nemenyi_cd_plot(avg_ranks, cd, out_path):
     plt.close()
 
 
-# ==========================================
-# MAIN EXECUTION PIPELINE
-# ==========================================
 def main():
     base_dir = "."
     eval_reward_dir = os.path.join(base_dir, "eval_reward")

@@ -1,28 +1,3 @@
-"""
-Optuna hyperparameter tuning for SC-ERL — two-stage approach.
-
-Stage 1  (--mode dropout):
-  Tunes shared surrogate params (beta, omega, k, epsilon, mad_k), TD3 backbone
-  params, and dropout-specific params (dropout_p, mc_samples) together.
-  dropout is used as Stage 1 because it actually exercises k and mad_k via
-  real uncertainty estimation — random mode does not.
-
-Stage 2  (--mode evidential|ensemble):
-  Loads the shared params from the best dropout trial (--base-study) and fixes
-  them, then tunes only the mode-specific params (lam / k_ensembles).
-
-Usage
------
-# Stage 1 — shared + backbone + dropout params
-python optim/tune_sc_erl.py --env HalfCheetah-v5 --mode dropout --n-trials 30
-
-# Stage 2 — evidential and ensemble (parallel)
-python optim/tune_sc_erl.py --env HalfCheetah-v5 --mode evidential --n-trials 20 \\
-    --base-study optuna_dropout_HalfCheetah-v5.db
-python optim/tune_sc_erl.py --env HalfCheetah-v5 --mode ensemble  --n-trials 20 \\
-    --base-study optuna_dropout_HalfCheetah-v5.db
-"""
-
 import argparse
 import json
 import pathlib
@@ -47,10 +22,6 @@ SHARED_PARAM_KEYS = {
     "rl.policy_delay",
 }
 
-# ---------------------------------------------------------------------------
-# YAML patching helpers
-# ---------------------------------------------------------------------------
-
 def _set_nested(d: dict, dotted_key: str, value) -> None:
     keys = dotted_key.split(".")
     node = d
@@ -60,7 +31,6 @@ def _set_nested(d: dict, dotted_key: str, value) -> None:
 
 
 def patch_yaml(params: dict) -> str:
-    """Apply *params* to sc_erl.yaml; return the original file text."""
     original = SC_ERL_CFG.read_text()
     cfg = yaml.safe_load(original)
     for dotted_key, value in params.items():
@@ -73,12 +43,7 @@ def restore_yaml(original: str) -> None:
     SC_ERL_CFG.write_text(original)
 
 
-# ---------------------------------------------------------------------------
-# Search-space definitions
-# ---------------------------------------------------------------------------
-
 def suggest_shared_params(trial: optuna.Trial) -> dict:
-    """Shared surrogate params — tuned in Stage 1 (dropout mode)."""
     return {
         "surrogate.beta": trial.suggest_float("surrogate.beta", 0.1, 10.0, log=True),
         "surrogate.omega": trial.suggest_float("surrogate.omega", 0.3, 0.9),
@@ -89,7 +54,6 @@ def suggest_shared_params(trial: optuna.Trial) -> dict:
 
 
 def suggest_backbone_params(trial: optuna.Trial, backbone: str) -> dict:
-    """TD3 backbone params — tuned in Stage 1 alongside shared params."""
     if backbone != "td3":
         return {}
     return {
@@ -100,7 +64,6 @@ def suggest_backbone_params(trial: optuna.Trial, backbone: str) -> dict:
 
 
 def suggest_mode_params(trial: optuna.Trial, mode: str) -> dict:
-    """Mode-specific params."""
     if mode == "dropout":
         return {
             "surrogate.dropout_p": trial.suggest_float("surrogate.dropout_p", 0.05, 0.4),
@@ -118,11 +81,6 @@ def suggest_mode_params(trial: optuna.Trial, mode: str) -> dict:
 
 
 def load_base_params(base_study_path: str) -> dict:
-    """Load shared params from the best trial of a Stage 1 (dropout) study.
-
-    Only SHARED_PARAM_KEYS are returned — dropout-specific params (dropout_p,
-    mc_samples) are intentionally excluded so Stage 2 modes tune freely.
-    """
     storage = f"sqlite:///{base_study_path}"
     summaries = optuna.get_all_study_summaries(storage=storage)
     if not summaries:
@@ -131,10 +89,6 @@ def load_base_params(base_study_path: str) -> dict:
     all_params = study.best_trial.params
     return {k: v for k, v in all_params.items() if k in SHARED_PARAM_KEYS}
 
-
-# ---------------------------------------------------------------------------
-# Optuna objective
-# ---------------------------------------------------------------------------
 
 def make_objective(env: str, mode: str, backbone: str, n_steps: int, seed: int,
                    base_params: dict | None):
@@ -186,10 +140,6 @@ def make_objective(env: str, mode: str, backbone: str, n_steps: int, seed: int,
 
     return objective
 
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def parse_args():
     p = argparse.ArgumentParser(
