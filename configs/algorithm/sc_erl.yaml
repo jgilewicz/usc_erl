@@ -4,9 +4,11 @@ backbone: td3
 buffer_size: 1000000
 n_steps: 1000000
 batch_size: 256
+
 network:
   actor_hidden_dim: 256
   critic_hidden_dim: 256
+
 rl:
   gamma: 0.99
   tau: 0.005
@@ -16,8 +18,9 @@ rl:
   gradient_steps: 1
   frac_frames_train: 1.0
   policy_delay: 1
-  policy_noise: 0.17327654480284674
-  noise_clip: 0.5932564674050416
+  policy_noise: 0.206
+  noise_clip: 0.562
+
 evolution:
   population_size: 10
   mutation_std: 0.1
@@ -28,18 +31,20 @@ evolution:
   crossover_prob: 0.5
   crossover_mode: distillation
   eval_trials: 1
+
 surrogate:
   enabled: true
-  omega: 0.7004462279782091
-  k: 2048
-  k_ensembles: 7
-  mode: evidential
-  beta: 0.43364855632427685
-  dropout_p: 0.38728196617536026
+  omega: 0.549
+  k: 1024
+  k_ensembles: 8
+  mode: ensemble
+  beta: 0.432
+  dropout_p: 0.387
   mc_samples: 25
-  epsilon: 0.14610216878252746
-  lam: 0.12520653814999466
-  mad_k: 1.5129213253152038
+  epsilon: 0.142
+  lam: 0.1
+  mad_k: 2.483
   beta_lr: 1e-3
+
 warmup:
   warmup_steps: 25000

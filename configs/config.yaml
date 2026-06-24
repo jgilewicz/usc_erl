@@ -12,7 +12,7 @@ eval_env:
   id: Swimmer-v5
 wandb:
   enabled: true
-  project: ue_evo_rl_2
+  project: ue_evo_rl_3
   entity: evo_rl
   name: null
   tags: []
