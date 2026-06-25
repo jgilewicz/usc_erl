@@ -8,7 +8,7 @@ This file is the authoritative reference for AI-assisted development on this cod
 
 **SC-ERL** is a hybrid evolutionary + deep RL framework. A population of GA actors evolves alongside a TD3/DDPG RL agent sharing a replay buffer. The key novelty is a **surrogate controller** that uses epistemic uncertainty to gate whether each candidate policy needs a real environment rollout or can be scored cheaply via the critic.
 
-Algorithms: `sc_erl` (4 surrogate modes), `erl`, `td3`, `ddpg`, `ppo`, `sac` (SB3/PyTorch), `crossq` (SBX/JAX).
+Algorithms: `sc_erl` (4 surrogate modes), `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq` (all SB3/PyTorch).
 Environments:
 - **MuJoCo v5**: `HalfCheetah-v5`, `Hopper-v5`, `Walker2d-v5`, `Ant-v5`, `Swimmer-v5`.
 - **DMC via fancy_gym**: `dm_control/dog-{stand,walk,trot,run,fetch}-v0`.
@@ -30,9 +30,9 @@ Environments:
 | `src/common/utils.py` | Huber loss, soft-update (`polyak_update`), weight flattening |
 | `src/common/reply_buffer.py` | Replay buffer (Transition namedtuple + circular buffer) |
 | `src/algorithms/SAC/sac.py` | SAC wrapper — SB3 model + WandB callback |
-| `src/algorithms/CrossQ/crossq.py` | CrossQ wrapper — SBX/JAX model + JAX device routing + WandB callback |
+| `src/algorithms/CrossQ/crossq.py` | CrossQ wrapper — sb3-contrib PyTorch model + WandB callback |
 | `configs/algorithm/sac.yaml` | SAC hyperparameters (`learning_rate`, `ent_coef`) |
-| `configs/algorithm/crossq.yaml` | CrossQ hyperparameters (`learning_rate`, `qf_learning_rate`, `gradient_steps`) |
+| `configs/algorithm/crossq.yaml` | CrossQ hyperparameters (`learning_rate`, `gradient_steps`) |
 | `configs/algorithm/sc_erl.yaml` | SC-ERL hyperparameters (surrogate, evolution, rl, network) |
 | `configs/config.yaml` | Global defaults (seed, device, wandb, env) |
 
@@ -139,4 +139,4 @@ All runs use `uv run python entry_point.py`. Do not invoke `entry_point.py` dire
 - **DMC config naming**: env-specific configs for DMC follow the sanitized slug convention — `dm_control/dog-stand-v0` → `sc_erl_dm_control_dog-stand-v0.yaml`.
 - **SLURM**: single `slurm_run_array.sh` handles both backends. Backend and algo matrix auto-detected from `TARGET_ENV` prefix (`dm_control/` → fancy_gym + 4 SC-ERL modes, 20 tasks; otherwise → MuJoCo + 10 algos, 50 tasks). Pass `--array=0-19` for DMC, `--array=0-49` for MuJoCo.
 - **SAC** wraps SB3 `SAC` (PyTorch). Shares `cfg.device` normally. No extra setup.
-- **CrossQ** wraps SBX `CrossQ` (JAX). `_configure_jax_device()` in `crossq.py` translates `torch.device` → JAX platform before model construction. MPS is not supported by JAX — falls back to CPU with a warning. GPU on the cluster requires `pip install -U "jax[cuda12]"` once inside the venv after `uv sync`. Do not pass `device=` to the SBX constructor; JAX picks it up globally via `jax.config`.
+- **CrossQ** wraps `sb3_contrib.CrossQ` (PyTorch). Accepts `device` directly; no JAX setup needed.

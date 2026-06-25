@@ -13,7 +13,7 @@ dependencies = [
     "matplotlib>=3.10.9",
     "opencv-python>=4.13.0.92",
     "optuna>=4.9.0",
-    "sbx-rl>=0.27.0",
+    "sb3-contrib>=2.3.0",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "shimmy>=2.0.1",
@@ -23,14 +23,6 @@ dependencies = [
     "torchrl>=0.12.0",
     "tqdm>=4.67.3",
     "wandb>=0.26.1",
-]
-
-[project.optional-dependencies]
-# GPU JAX for CrossQ on the cluster (CUDA 12.x).
-# Install with: uv sync --extra cuda
-# Must be run after `uv sync` since it overrides the CPU jaxlib pulled in by sbx-rl.
-cuda = [
-    "jax[cuda12]>=0.4.26",
 ]
 
 [tool.uv]

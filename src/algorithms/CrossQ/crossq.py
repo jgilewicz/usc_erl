@@ -1,35 +1,11 @@
-import warnings
 import torch
 import gymnasium as gym
 
-from sbx import CrossQ as _SBX_CrossQ
+from sb3_contrib import CrossQ as _SB3_CrossQ
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy as _sb3_eval
 
 from common.wandb_logger import WandbLogger
-
-
-def _configure_jax_device(device: torch.device) -> None:
-    """
-    Map a PyTorch device onto JAX's platform.
-    Must be called before any JAX computation.
-    MPS is not supported by JAX — falls back to CPU with a warning.
-    GPU on the cluster requires jax[cuda12] installed separately:
-        pip install -U "jax[cuda12]"
-    """
-    import jax
-
-    platform = device.type
-    if platform == "cuda":
-        jax.config.update("jax_platform_name", "gpu")
-    elif platform == "mps":
-        warnings.warn(
-            "JAX does not support MPS (Apple Silicon GPU). CrossQ will run on CPU.",
-            stacklevel=2,
-        )
-        jax.config.update("jax_platform_name", "cpu")
-    else:
-        jax.config.update("jax_platform_name", "cpu")
 
 
 class _EvalAndLogCallback(BaseCallback):
@@ -67,7 +43,6 @@ class _EvalAndLogCallback(BaseCallback):
                 "eval_reward": self.last_eval_reward,
                 "total_steps": self.num_timesteps,
             }
-            # Remap canonical SB3/SBX keys so the download pipeline finds "critic_loss" etc.
             _KEY_MAP = {
                 "train/critic_loss": "critic_loss",
                 "train/actor_loss": "actor_loss",
@@ -94,9 +69,7 @@ def CrossQ(
     batch_size: int = 256,
     device: torch.device = torch.device("cpu"),
     gamma: float = 0.99,
-    tau: float = 0.005,
     learning_rate: float = 1e-4,
-    qf_learning_rate: float = 1e-3,
     ent_coef: str | float = "auto",
     gradient_steps: int = 1,
     policy_delay: int = 1,
@@ -107,13 +80,10 @@ def CrossQ(
     debug: bool = False,
 ) -> float:
 
-    _configure_jax_device(device)
-
-    model = _SBX_CrossQ(
+    model = _SB3_CrossQ(
         "MlpPolicy",
         env,
         learning_rate=learning_rate,
-        qf_learning_rate=qf_learning_rate,
         buffer_size=1_000_000,
         learning_starts=warmup_steps,
         batch_size=batch_size,
@@ -122,6 +92,7 @@ def CrossQ(
         policy_delay=policy_delay,
         ent_coef=ent_coef,
         verbose=0,
+        device=device,
     )
 
     callback = _EvalAndLogCallback(

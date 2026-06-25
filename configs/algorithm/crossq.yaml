@@ -11,9 +11,7 @@ batch_size: 256
 
 rl:
   gamma: 0.99
-  tau: 0.005
-  learning_rate: 1e-4      # actor LR (CrossQ paper default)
-  qf_learning_rate: 1e-3   # critic LR (CrossQ paper default)
+  learning_rate: 1e-4
   ent_coef: auto
   gradient_steps: 1
   policy_delay: 1

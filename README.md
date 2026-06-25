@@ -6,7 +6,7 @@ Master's research repository implementing a modular hybrid framework combining d
 
 The central contribution is **SC-ERL** — a novel algorithm that gates genetic algorithm fitness evaluations using a learned critic as a surrogate. Instead of running every candidate policy through slow environment rollouts, the surrogate estimates fitness at near-zero cost. Epistemic uncertainty determines when the surrogate is trusted versus when a real rollout is triggered.
 
-Baselines included: DDPG, TD3, PPO, SAC (via Stable-Baselines3), CrossQ (via SBX/JAX), and canonical ERL (configured with distilled crossover).
+Baselines included: DDPG, TD3, PPO, SAC, CrossQ (all via Stable-Baselines3 / PyTorch), and canonical ERL (configured with distilled crossover).
 
 ---
 
@@ -28,7 +28,7 @@ ue_sc_erl/
 │   ├── algorithms/
 │   │   ├── DDPG/, PPO/, TD3/       # Classical continuous control baselines (PyTorch)
 │   │   ├── SAC/                    # SAC via Stable-Baselines3 (PyTorch)
-│   │   ├── CrossQ/                 # CrossQ via SBX — batch-norm critic (JAX)
+│   │   ├── CrossQ/                 # CrossQ via sb3-contrib — batch-norm critic (PyTorch)
 │   │   ├── ERL/                    # Canonical ERL (DDPG + GA with shared replay buffer)
 │   │   └── SC_ERL/                 # Novel uncertainty-gated surrogate-assisted ERL
 │   ├── common/
@@ -186,23 +186,15 @@ task run ALGO=sac CLI_ARGS="env.id=HalfCheetah-v5"
 
 Key config knobs (`configs/algorithm/sac.yaml`): `rl.learning_rate`, `rl.ent_coef` (`auto` or float), `warmup.warmup_steps`.
 
-### CrossQ (SBX / JAX)
+### CrossQ (sb3-contrib / PyTorch)
 
-A thin wrapper around [SBX](https://github.com/araffin/sbx) CrossQ — a batch-normalised critic algorithm that is highly sample-efficient. SBX runs on JAX rather than PyTorch.
+A thin wrapper around [sb3-contrib](https://github.com/Stable-Baselines-Team/stable-baselines3-contrib) CrossQ — a batch-normalised critic algorithm that is highly sample-efficient. Runs on PyTorch, uses the same `device` as all other algorithms.
 
 ```bash
 task run ALGO=crossq CLI_ARGS="env.id=HalfCheetah-v5"
 ```
 
-Key config knobs (`configs/algorithm/crossq.yaml`): `rl.learning_rate` (actor), `rl.qf_learning_rate` (critic), `rl.gradient_steps`, `rl.policy_delay`.
-
-**JAX GPU setup** — `uv sync` installs the CPU-only JAX wheel. For GPU on the cluster, run once inside the venv:
-
-```bash
-pip install -U "jax[cuda12]"
-```
-
-**MPS (Apple Silicon)** — JAX does not support MPS. CrossQ will automatically fall back to CPU with a warning; no action needed.
+Key config knobs (`configs/algorithm/crossq.yaml`): `rl.learning_rate`, `rl.gradient_steps`, `rl.policy_delay`.
 
 ---
 
@@ -212,9 +204,9 @@ pip install -U "jax[cuda12]"
 
 `HalfCheetah-v5`, `Hopper-v5`, `Walker2d-v5`, `Ant-v5`, `Swimmer-v5`.
 
-### DeepMind Control Suite (via fancy_gym)
+### DeepMind Control Suite (via shimmy)
 
-Five DMC dog locomotion tasks are supported through [fancy_gym](https://github.com/ALRhub/fancy_gym):
+Five DMC dog locomotion tasks are supported through [shimmy](https://github.com/Farama-Foundation/Shimmy), which registers `dm_control` environments into the Gymnasium registry:
 
 | Task | Env ID |
 |------|--------|
@@ -226,8 +218,8 @@ Five DMC dog locomotion tasks are supported through [fancy_gym](https://github.c
 
 The environment backend is selected via `env.backend`:
 - `auto` (default) — detects `dm_control/`, `fancy/`, or `metaworld/` prefixes automatically.
-- `mujoco` — force MuJoCo/Gymnasium without fancy_gym import.
-- `fancy_gym` — force fancy_gym import regardless of env ID.
+- `mujoco` — force MuJoCo/Gymnasium without shimmy import.
+- `fancy_gym` — force shimmy import regardless of env ID.
 
 Environment-specific configs under `configs/algorithm/sc_erl/` are auto-loaded and already set `backend: fancy_gym` for all dog tasks.
 
