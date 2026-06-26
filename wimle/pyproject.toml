@@ -13,8 +13,6 @@ dependencies = [
     "dm-control==1.0.14",
     "nvidia-cudnn-cu12==8.9.7.29",
     "nvidia-cuda-nvcc-cu12",
-    "jax==0.4.19",
-    "jaxlib==0.4.19+cuda12.cudnn89",
     "flax==0.7.5",
     "optax==0.2.2",
     "wandb",
@@ -22,5 +20,3 @@ dependencies = [
     "imageio",
 ]
 
-[tool.uv.sources]
-jaxlib = { url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html/jaxlib-0.4.19+cuda12.cudnn89-cp312-cp312-manylinux2014_x86_64.whl" }
