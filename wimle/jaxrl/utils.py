@@ -130,8 +130,11 @@ def evaluate_agents_if_time(i, agents, eval_envs, eval_interval, eval_episodes, 
     
     # Log the return array to wandb as np_return
     if 'return' in combined:
-        wandb.log({'np_return': combined['return']}, step=i)
-    
+        wandb.log({
+            'np_return': combined['return'],
+            'eval_reward': float(np.mean(combined['return'])),
+        }, step=i)
+
     if 'goal' in combined:
         wandb.log({'np_goal': combined['goal']}, step=i)
 

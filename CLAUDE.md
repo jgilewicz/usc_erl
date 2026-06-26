@@ -8,7 +8,7 @@ This file is the authoritative reference for AI-assisted development on this cod
 
 **SC-ERL** is a hybrid evolutionary + deep RL framework. A population of GA actors evolves alongside a TD3/DDPG RL agent sharing a replay buffer. The key novelty is a **surrogate controller** that uses epistemic uncertainty to gate whether each candidate policy needs a real environment rollout or can be scored cheaply via the critic.
 
-Algorithms: `sc_erl` (4 surrogate modes), `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq` (all SB3/PyTorch).
+Algorithms: `sc_erl` (4 surrogate modes), `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq` (all SB3/PyTorch), `wimle` (JAX, world-model + IQN, separate venv).
 Environments:
 - **MuJoCo v5**: `HalfCheetah-v5`, `Hopper-v5`, `Walker2d-v5`, `Ant-v5`, `Swimmer-v5`.
 - **DMC via fancy_gym**: `dm_control/dog-{stand,walk,trot,run,fetch}-v0`.
@@ -33,6 +33,9 @@ Environments:
 | `src/algorithms/CrossQ/crossq.py` | CrossQ wrapper — sb3-contrib PyTorch model + WandB callback |
 | `configs/algorithm/sac.yaml` | SAC hyperparameters (`learning_rate`, `ent_coef`) |
 | `configs/algorithm/crossq.yaml` | CrossQ hyperparameters (`learning_rate`, `gradient_steps`) |
+| `wimle/train_parallel.py` | WIMLE training loop (JAX, absl flags, parallel seeds) |
+| `wimle/hps.py` | WIMLE hyperparameter flags (batch_size=256, warmup=25k, eval_interval=5k) |
+| `wimle/jaxrl/wimle/wimle_learner.py` | WIMLELearner — IQN critic + IMLE world-model ensemble |
 | `configs/algorithm/sc_erl.yaml` | SC-ERL hyperparameters (surrogate, evolution, rl, network) |
 | `configs/config.yaml` | Global defaults (seed, device, wandb, env) |
 
@@ -140,3 +143,4 @@ All runs use `uv run python entry_point.py`. Do not invoke `entry_point.py` dire
 - **SLURM**: single `slurm_run_array.sh` handles both backends. Backend and algo matrix auto-detected from `TARGET_ENV` prefix (`dm_control/` → fancy_gym + 4 SC-ERL modes, 20 tasks; otherwise → MuJoCo + 10 algos, 50 tasks). Pass `--array=0-19` for DMC, `--array=0-49` for MuJoCo.
 - **SAC** wraps SB3 `SAC` (PyTorch). Shares `cfg.device` normally. No extra setup.
 - **CrossQ** wraps `sb3_contrib.CrossQ` (PyTorch). Accepts `device` directly; no JAX setup needed.
+- **WIMLE** lives in `wimle/` with its own `.venv` and `pyproject.toml` (JAX stack). Does NOT use Hydra — configured via `absl` flags in `wimle/hps.py`. Launch via `slurm_run_wimle.sh`. The SLURM script translates canonical env IDs (`dm_control/dog-stand-v0`) to WIMLE's internal format (`dog-stand`) automatically. Logs to `wandb_project=ue_evo_rl_3` under method key `wimle` so `download_results.py` can ingest it alongside other algorithms. `benchmark=gym` for MuJoCo v5 envs, `benchmark=dmc` for DMC dog envs.

@@ -6,7 +6,7 @@ Master's research repository implementing a modular hybrid framework combining d
 
 The central contribution is **SC-ERL** — a novel algorithm that gates genetic algorithm fitness evaluations using a learned critic as a surrogate. Instead of running every candidate policy through slow environment rollouts, the surrogate estimates fitness at near-zero cost. Epistemic uncertainty determines when the surrogate is trusted versus when a real rollout is triggered.
 
-Baselines included: DDPG, TD3, PPO, SAC, CrossQ (all via Stable-Baselines3 / PyTorch), and canonical ERL (configured with distilled crossover).
+Baselines included: DDPG, TD3, PPO, SAC, CrossQ (all via Stable-Baselines3 / PyTorch), canonical ERL (configured with distilled crossover), and WIMLE (JAX — world-model IQN with IMLE latent dynamics).
 
 ---
 
@@ -41,6 +41,11 @@ ue_sc_erl/
 │       ├── ensemble_module.py      # Multi-critic ensemble with prediction std
 │       ├── evolution_module.py     # Elite preservation, selection, sparse mutation
 │       └── mc_dropout_module.py    # MC Dropout runner for epistemic variance
+├── wimle/                          # WIMLE baseline (JAX, own venv)
+│   ├── train_parallel.py           # Training entry-point (absl flags)
+│   ├── hps.py                      # Hyperparameter flag definitions
+│   └── jaxrl/                      # JAX RL primitives (IQN critic, IMLE world-model)
+├── slurm_run_wimle.sh              # SLURM array for WIMLE (10 envs × 5 seeds)
 ├── optim/
 │   ├── tune_sc_erl.py              # Two-stage Optuna tuning script
 │   └── slurm_tune.sh               # SLURM job submission for tuning
@@ -77,7 +82,7 @@ pip install -e .
 task run ALGO=sc_erl CLI_ARGS="env.id=HalfCheetah-v5 surrogate.mode=dropout"
 ```
 
-Supported `ALGO` values: `sc_erl`, `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq`.
+Supported `ALGO` values: `sc_erl`, `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq`. For WIMLE see the dedicated SLURM script below.
 
 SC-ERL `surrogate.mode` options: `dropout`, `ensemble`, `evidential`, `random`.
 
@@ -115,6 +120,19 @@ TARGET_ENV=dm_control/dog-walk-v0  sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-trot-v0  sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-run-v0   sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-fetch-v0 sbatch --array=0-19 slurm_run_array.sh
+```
+
+### WIMLE (cluster only)
+
+50 tasks (10 envs × 5 seeds). Uses a separate JAX venv inside `wimle/`.
+
+```bash
+sbatch --array=0-49 slurm_run_wimle.sh
+```
+
+Override steps or parallel env count:
+```bash
+N_STEPS=2000000 NUM_SEEDS=4 sbatch --array=0-49 slurm_run_wimle.sh
 ```
 
 ### Reports

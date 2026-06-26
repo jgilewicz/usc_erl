@@ -56,6 +56,7 @@ METHOD_COLORS = {
     "sc_erl_random": "#949494",
     "sac": "#e377c2",
     "crossq": "#bcbd22",
+    "wimle": "#17becf",
 }
 
 METHOD_LABELS = {
@@ -65,6 +66,7 @@ METHOD_LABELS = {
     "sac": "SAC (Baseline)",
     "crossq": "CrossQ (Baseline)",
     "erl": "ERL (Baseline)",
+    "wimle": "WIMLE (Baseline)",
     "sc_erl_ensemble": "SC-ERL (Ensemble) [Ours]",
     "sc_erl_dropout": "SC-ERL (Dropout) [Ours]",
     "sc_erl_evidential": "SC-ERL (Evidential) [Ours]",
@@ -76,7 +78,7 @@ PROPOSED_METHODS = ["sc_erl_ensemble", "sc_erl_dropout", "sc_erl_evidential"]
 SC_ERL_VARIANTS = ["sc_erl_random", "sc_erl_dropout", "sc_erl_ensemble", "sc_erl_evidential"]
 
 METHOD_ORDER_BARS = [
-    "ppo", "ddpg", "td3", "sac", "crossq", "erl",
+    "ppo", "ddpg", "td3", "sac", "crossq", "wimle", "erl",
     "sc_erl_random", "sc_erl_dropout", "sc_erl_ensemble", "sc_erl_evidential",
 ]
 
@@ -764,6 +766,7 @@ def build_summary_table_latex(env_id, base_dir="."):
         "ddpg",
         "sac",
         "crossq",
+        "wimle",
         "erl",
         "sc_erl_random",
         "sc_erl_ensemble",
@@ -800,7 +803,7 @@ def build_summary_table_latex(env_id, base_dir="."):
 
 
 def build_significance_table_latex(env_id, stable_values):
-    baselines = ["ppo", "td3", "ddpg", "sac", "crossq", "erl", "sc_erl_random"]
+    baselines = ["ppo", "td3", "ddpg", "sac", "crossq", "wimle", "erl", "sc_erl_random"]
 
     tex = "\\begin{table}[htbp]\n\\centering\n"
     tex += f"\\caption{{Statistical Significance Testing for \\texttt{{{
@@ -947,6 +950,7 @@ def build_nemenyi_ranking_table_latex(all_stable_values, environments):
         "ddpg",
         "sac",
         "crossq",
+        "wimle",
         "erl",
         "sc_erl_random",
         "sc_erl_ensemble",

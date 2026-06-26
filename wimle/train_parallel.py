@@ -110,6 +110,14 @@ def main(_):
         if i % FLAGS.eval_interval == 0:
             aggregated_infos = aggregate_info_dicts([infos])
             log_to_wandb_if_time_to(i, aggregated_infos, FLAGS.eval_interval)
+            # Bare keys expected by the shared download pipeline (matches TD3/ERL/SAC convention)
+            wandb.log(
+                {
+                    "total_steps": i,
+                    **{k: float(np.mean(aggregated_infos[k])) for k in ('critic_loss', 'actor_loss') if k in aggregated_infos},
+                },
+                step=i,
+            )
             if i > 0:
                 evaluate_agents_if_time(i, [agent], [eval_env], FLAGS.eval_interval, FLAGS.eval_episodes, save_video=getattr(FLAGS, 'save_video', False))
 

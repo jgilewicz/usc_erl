@@ -26,18 +26,19 @@
 #SBATCH --error=logs/slurm-%A_%a.err
 #SBATCH --mail-type=FAIL
 
-# ---- Environment matrix: "benchmark:env_name" pairs ----
+# ---- Environment matrix: "benchmark:canonical_env_id" pairs ----
+# canonical_env_id matches the project-wide convention used by download_results.py
 ENVS=(
-    "gym:HalfCheetah-v5"   # 0..4
-    "gym:Hopper-v5"        # 5..9
-    "gym:Walker2d-v5"      # 10..14
-    "gym:Ant-v5"           # 15..19
-    "gym:Swimmer-v5"       # 20..24
-    "dmc:dog-stand"        # 25..29
-    "dmc:dog-walk"         # 30..34
-    "dmc:dog-trot"         # 35..39
-    "dmc:dog-run"          # 40..44
-    "dmc:dog-fetch"        # 45..49
+    "gym:HalfCheetah-v5"             # 0..4
+    "gym:Hopper-v5"                  # 5..9
+    "gym:Walker2d-v5"                # 10..14
+    "gym:Ant-v5"                     # 15..19
+    "gym:Swimmer-v5"                 # 20..24
+    "dmc:dm_control/dog-stand-v0"    # 25..29
+    "dmc:dm_control/dog-walk-v0"     # 30..34
+    "dmc:dm_control/dog-trot-v0"     # 35..39
+    "dmc:dm_control/dog-run-v0"      # 40..44
+    "dmc:dm_control/dog-fetch-v0"    # 45..49
 )
 
 SEEDS=(0 1 2 3 4)
@@ -52,13 +53,21 @@ SEED_IDX=$((TASK_ID % N_SEEDS))
 
 ENV_PAIR="${ENVS[$ENV_IDX]}"
 BENCHMARK="${ENV_PAIR%%:*}"
-ENV_NAME="${ENV_PAIR##*:}"
+CANONICAL_ENV="${ENV_PAIR##*:}"
 SEED="${SEEDS[$SEED_IDX]}"
 
-ENV_SLUG=$(echo "${ENV_NAME}" | tr '/' '_' | tr ':' '_')
+# Run name uses the project-wide slug so download_results.py can parse it
+ENV_SLUG=$(echo "${CANONICAL_ENV}" | tr '/' '_' | tr ':' '_')
 RUN_NAME="wimle_${ENV_SLUG}_seed${SEED}"
 
-echo "Task ${TASK_ID} | WIMLE | benchmark=${BENCHMARK} env=${ENV_NAME} | seed ${SEED}"
+# WIMLE's --env_name flag uses dm_control.suite format (no prefix, no version suffix)
+if [[ "$BENCHMARK" == "dmc" ]]; then
+    WIMLE_ENV=$(echo "$CANONICAL_ENV" | sed 's|dm_control/||' | sed 's|-v0$||')
+else
+    WIMLE_ENV="$CANONICAL_ENV"
+fi
+
+echo "Task ${TASK_ID} | WIMLE | benchmark=${BENCHMARK} env=${CANONICAL_ENV} | seed ${SEED}"
 
 source /usr/local/sbin/modules.sh
 module load Python/3.12.3-GCCcore-13.3.0
@@ -90,7 +99,7 @@ mkdir -p "${PROJECT_DIR}/logs" "${WANDB_DIR}"
 
 python train_parallel.py \
     --benchmark="${BENCHMARK}" \
-    --env_name="${ENV_NAME}" \
+    --env_name="${WIMLE_ENV}" \
     --seed="${SEED}" \
     --num_seeds="${NUM_SEEDS}" \
     --max_steps="${N_STEPS}" \
@@ -98,7 +107,7 @@ python train_parallel.py \
     --start_training=25000 \
     --eval_interval=5000 \
     --run_name="${RUN_NAME}" \
-    --wandb_project="WIMLE" \
+    --wandb_project="ue_evo_rl_3" \
     --wandb_mode="offline" \
     --save_dir="${PROJECT_DIR}/wimle_outputs"
 
