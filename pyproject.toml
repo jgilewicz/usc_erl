@@ -28,3 +28,8 @@ dependencies = [
 [tool.uv]
 package = true
 
+[tool.uv.workspace]
+members = [
+    "wimle",
+]
+
