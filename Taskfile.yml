@@ -104,7 +104,7 @@ tasks:
           "hydra.run.dir=outputs/${RUN_NAME}"
 
   run-parallel-dmc:
-    desc: "Run SC-ERL across all 5 DMC dog tasks (all 4 surrogate modes, 5 seeds) in parallel"
+    desc: "Run all 10 algorithms across all 5 DMC dog tasks (all 5 seeds) in parallel"
     vars:
       PARALLEL: '{{default "4" .PARALLEL}}'
     cmds:
@@ -117,19 +117,40 @@ tasks:
           "dm_control/dog-run-v0"
           "dm_control/dog-fetch-v0"
         )
-        MODES=("dropout" "ensemble" "evidential" "random")
+        ALGOS=(
+          "sc_erl:dropout"
+          "sc_erl:ensemble"
+          "sc_erl:evidential"
+          "sc_erl:random"
+          "td3:"
+          "erl:"
+          "ddpg:"
+          "ppo:"
+          "sac:"
+          "crossq:"
+        )
         SEEDS=(0 1 2 3 4)
         mkdir -p logs
 
         generate_commands() {
           for ENV in "${ENVS[@]}"; do
             SLUG=$(echo "${ENV}" | tr '/' '_' | tr ':' '_')
-            for MODE in "${MODES[@]}"; do
+            for ALGO_MODE in "${ALGOS[@]}"; do
+              ALGO="${ALGO_MODE%%:*}"
+              MODE="${ALGO_MODE##*:}"
               for SEED in "${SEEDS[@]}"; do
-                RUN_NAME="sc_erl_${MODE}_${SLUG}_seed${SEED}"
+                if [[ -n "$MODE" ]]; then
+                  RUN_NAME="${ALGO}_${MODE}_${SLUG}_seed${SEED}"
+                  TAGS="[DMC,${ALGO},${MODE}]"
+                  SURROGATE_ARG="surrogate.mode=${MODE}"
+                else
+                  RUN_NAME="${ALGO}_${SLUG}_seed${SEED}"
+                  TAGS="[DMC,${ALGO},baseline]"
+                  SURROGATE_ARG=""
+                fi
                 echo "uv run python entry_point.py \
-                  algorithm=sc_erl \
-                  surrogate.mode=${MODE} \
+                  algorithm=${ALGO} \
+                  ${SURROGATE_ARG} \
                   seed=${SEED} \
                   env.id=${ENV} \
                   eval_env.id=${ENV} \
@@ -138,7 +159,7 @@ tasks:
                   n_steps=1000000 \
                   wandb.enabled=true \
                   'wandb.name=${RUN_NAME}' \
-                  'wandb.tags=[DMC,sc_erl,${MODE}]' \
+                  'wandb.tags=${TAGS}' \
                   'hydra.run.dir=outputs/${RUN_NAME}'"
               done
             done

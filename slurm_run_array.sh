@@ -9,12 +9,13 @@
 #   TARGET_ENV=Ant-v5                  sbatch --array=0-49 slurm_run_array.sh
 #   TARGET_ENV=Swimmer-v5              sbatch --array=0-49 slurm_run_array.sh
 #
-# DMC dog  (4 SC-ERL modes × 5 seeds = 20 tasks):
-#   TARGET_ENV=dm_control/dog-stand-v0 sbatch --array=0-19 slurm_run_array.sh
-#   TARGET_ENV=dm_control/dog-walk-v0  sbatch --array=0-19 slurm_run_array.sh
-#   TARGET_ENV=dm_control/dog-trot-v0  sbatch --array=0-19 slurm_run_array.sh
-#   TARGET_ENV=dm_control/dog-run-v0   sbatch --array=0-19 slurm_run_array.sh
-#   TARGET_ENV=dm_control/dog-fetch-v0 sbatch --array=0-19 slurm_run_array.sh
+# DMC dog  (10 algos × 5 seeds = 50 tasks):
+#   TARGET_ENV=dm_control/dog-stand-v0 sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=dm_control/dog-walk-v0  sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=dm_control/dog-trot-v0  sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=dm_control/dog-run-v0   sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=dm_control/dog-fetch-v0 sbatch --array=0-49 slurm_run_array.sh
+#   (SC-ERL only: --array=0-19; baselines only: --array=20-49)
 #
 # Optional overrides:
 #   N_STEPS  Training steps per run (default: 1000000)
@@ -33,32 +34,27 @@
 ENV="${TARGET_ENV:-HalfCheetah-v5}"
 N_STEPS="${N_STEPS:-1000000}"
 
-# ---- Backend + algorithm matrix: auto-detected from env ID prefix ----
+# ---- Backend auto-detected from env ID prefix ----
 if [[ "$ENV" == dm_control/* || "$ENV" == fancy/* || "$ENV" == metaworld/* ]]; then
   BACKEND="fancy_gym"
   ENV_TAG="DMC"
-  ALGORITHMS=(
-    "sc_erl:dropout"    # 0..4
-    "sc_erl:ensemble"   # 5..9
-    "sc_erl:evidential" # 10..14
-    "sc_erl:random"     # 15..19
-  )
 else
   BACKEND="mujoco"
   ENV_TAG="MuJoCo"
-  ALGORITHMS=(
-    "sc_erl:dropout"    # 0..4
-    "sc_erl:ensemble"   # 5..9
-    "sc_erl:evidential" # 10..14
-    "sc_erl:random"     # 15..19
-    "td3:"              # 20..24
-    "erl:"              # 25..29
-    "ddpg:"             # 30..34
-    "ppo:"              # 35..39
-    "sac:"              # 40..44
-    "crossq:"           # 45..49
-  )
 fi
+
+ALGORITHMS=(
+  "sc_erl:dropout"    # 0..4
+  "sc_erl:ensemble"   # 5..9
+  "sc_erl:evidential" # 10..14
+  "sc_erl:random"     # 15..19
+  "td3:"              # 20..24
+  "erl:"              # 25..29
+  "ddpg:"             # 30..34
+  "ppo:"              # 35..39
+  "sac:"              # 40..44
+  "crossq:"           # 45..49
+)
 
 SEEDS=(0 1 2 3 4)
 N_SEEDS=${#SEEDS[@]}
