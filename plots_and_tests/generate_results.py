@@ -1267,6 +1267,83 @@ def generate_relative_improvement_plot(all_merged_data, environments, out_path):
         plt.close()
 
 
+def _build_group_section(
+    group_label, group_tag, group_envs, all_merged_data, all_stable_values, output_dir
+):
+    """Generate Nemenyi ranking + CD diagram + AUC + relative-improvement for one env group."""
+    if not group_envs:
+        return ""
+    tex = f"\\section{{{group_label} — Ranking and Cross-Environment Analysis}}\n"
+
+    sv_subset = {e: all_stable_values[e] for e in group_envs if e in all_stable_values}
+    md_subset = {e: all_merged_data[e] for e in group_envs if e in all_merged_data}
+
+    if len(group_envs) >= 2:
+        _, avg_ranks, cd, _ = compute_rankings_and_nemenyi(sv_subset, group_envs)
+        cd_path = os.path.join(output_dir, f"nemenyi_cd_diagram_{group_tag}.png")
+        try:
+            generate_nemenyi_cd_plot(avg_ranks, cd, cd_path)
+            has_cd = True
+        except Exception as e:
+            print(f"Warning: CD diagram [{group_label}]: {e}")
+            has_cd = False
+
+        tex += build_nemenyi_ranking_table_latex(sv_subset, group_envs)
+        if has_cd:
+            tex += (
+                "\\begin{figure}[H]\n\\centering\n"
+                f"  \\includegraphics[width=0.72\\textwidth]{{{os.path.basename(cd_path)}}}\n"
+                f"  \\caption{{Critical Difference diagram ({group_label}). "
+                "Methods connected by the grey bar are not significantly different "
+                "from the best-ranked method at $\\alpha = 0.05$.}}\n"
+                "\\end{figure}\n"
+            )
+    else:
+        tex += "% Only one environment in this group — ranking skipped.\n"
+
+    if len(group_envs) >= 2:
+        auc_path = os.path.join(output_dir, f"auc_bar_chart_{group_tag}.png")
+        try:
+            generate_auc_bar_chart(md_subset, group_envs, auc_path)
+            has_auc = True
+        except Exception as e:
+            print(f"Warning: AUC chart [{group_label}]: {e}")
+            has_auc = False
+
+        rel_path = os.path.join(output_dir, f"relative_improvement_{group_tag}.png")
+        try:
+            generate_relative_improvement_plot(md_subset, group_envs, rel_path)
+            has_rel = True
+        except Exception as e:
+            print(f"Warning: Relative improvement [{group_label}]: {e}")
+            has_rel = False
+
+        if has_auc:
+            tex += (
+                "\\subsection{Normalized Area Under Reward Curve}\n"
+                "\\begin{figure}[H]\n\\centering\n"
+                f"  \\includegraphics[width=\\textwidth]{{{os.path.basename(auc_path)}}}\n"
+                "  \\caption{Normalized AUC (trapezoidal, divided by step budget) at three "
+                "environmental interaction budgets: 200k, 500k, and 1M steps. "
+                "Error bars show $\\pm 1$ std across seeds.}\n"
+                "\\end{figure}\n\n"
+            )
+        if has_rel:
+            tex += (
+                "\\subsection{Relative Improvement over ERL Baseline}\n"
+                "\\begin{figure}[H]\n\\centering\n"
+                f"  \\includegraphics[width=\\textwidth]{{{os.path.basename(rel_path)}}}\n"
+                "  \\caption{Per-step relative improvement of SC-ERL variants over the "
+                "mean ERL reward curve. "
+                "Denominator floored at 70th percentile of $|r_{\\text{ERL}}|$ to suppress "
+                "zero-crossing artefacts. Shaded band: $\\pm 1$ std across seeds.}\n"
+                "\\end{figure}\n"
+            )
+
+    tex += "\\newpage\n"
+    return tex
+
+
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     eval_reward_dir = os.path.join(base_dir, "eval_reward")
@@ -1423,84 +1500,47 @@ def main():
 
         latex_document += "\\newpage\n"
 
-    # ---- Global Nemenyi ranking section ----
-    if len(environments) >= 2:
-        print("\nComputing global Nemenyi ranking table...")
-        _, avg_ranks, cd, friedman_p = compute_rankings_and_nemenyi(
-            all_stable_values, environments
+    # ---- Per-benchmark Nemenyi + cross-env plots ----
+    mujoco_envs = [e for e in environments if not e.startswith("dm_control_")]
+    dmc_envs = [e for e in environments if e.startswith("dm_control_")]
+
+    if mujoco_envs:
+        print(f"\nBuilding MuJoCo ranking section ({len(mujoco_envs)} envs)...")
+        latex_document += _build_group_section(
+            "MuJoCo Environments", "mujoco",
+            mujoco_envs, all_merged_data, all_stable_values, output_dir,
         )
-        cd_path = os.path.join(output_dir, "nemenyi_cd_diagram.png")
+
+    if dmc_envs:
+        print(f"\nBuilding DMC ranking section ({len(dmc_envs)} envs)...")
+        latex_document += _build_group_section(
+            "DMC Dog Environments", "dmc",
+            dmc_envs, all_merged_data, all_stable_values, output_dir,
+        )
+
+    # ---- Combined Nemenyi over all environments ----
+    if len(environments) >= 2:
+        print("\nComputing combined (all-environment) Nemenyi ranking...")
+        _, avg_ranks, cd, _ = compute_rankings_and_nemenyi(all_stable_values, environments)
+        cd_path = os.path.join(output_dir, "nemenyi_cd_diagram_all.png")
         try:
             generate_nemenyi_cd_plot(avg_ranks, cd, cd_path)
             has_cd = True
         except Exception as e:
-            print(f"Warning: Could not generate CD diagram: {e}")
+            print(f"Warning: Could not generate combined CD diagram: {e}")
             has_cd = False
 
-        latex_document += "\\section{Global Ranking Analysis (Nemenyi)}\n"
-        latex_document += build_nemenyi_ranking_table_latex(
-            all_stable_values, environments
-        )
+        latex_document += "\\section{Global Ranking Analysis — All Environments (Nemenyi)}\n"
+        latex_document += build_nemenyi_ranking_table_latex(all_stable_values, environments)
         if has_cd:
             latex_document += (
                 "\\begin{figure}[H]\n\\centering\n"
-                f"  \\includegraphics[width=0.72\\textwidth]{{nemenyi_cd_diagram.png}}\n"
-                "  \\caption{Critical Difference diagram. "
+                f"  \\includegraphics[width=0.72\\textwidth]{{{os.path.basename(cd_path)}}}\n"
+                "  \\caption{Critical Difference diagram across all environments (MuJoCo + DMC). "
                 "Methods connected by the grey bar are not significantly different "
                 "from the best-ranked method at $\\alpha = 0.05$.}\n"
                 "\\end{figure}\n"
             )
-        latex_document += "\\newpage\n"
-
-    # ---- Cross-environment analysis (AUC + Relative Improvement) ----
-    if len(environments) >= 2:
-        print("\nGenerating cross-environment analysis plots...")
-        auc_path = os.path.join(output_dir, "auc_bar_chart.png")
-        rel_path = os.path.join(output_dir, "relative_improvement.png")
-
-        try:
-            generate_auc_bar_chart(all_merged_data, environments, auc_path)
-            has_auc = True
-        except Exception as e:
-            print(f"Warning: Could not generate AUC bar chart: {e}")
-            has_auc = False
-
-        try:
-            generate_relative_improvement_plot(all_merged_data, environments, rel_path)
-            has_rel = True
-        except Exception as e:
-            print(f"Warning: Could not generate relative improvement plot: {e}")
-            has_rel = False
-
-        latex_document += "\\section{Cross-Environment Performance Analysis}\n"
-
-        if has_auc:
-            latex_document += (
-                "\\subsection{Normalized Area Under Reward Curve}\n"
-                "\\begin{figure}[H]\n\\centering\n"
-                "  \\includegraphics[width=\\textwidth]{auc_bar_chart.png}\n"
-                "  \\caption{Normalized AUC (trapezoidal, divided by step budget) at three "
-                "environmental interaction budgets: 200k, 500k, and 1M steps. "
-                "Hatch patterns distinguish budgets within each method group; "
-                "error bars show $\\pm 1$ std across seeds.}\n"
-                "\\end{figure}\n\n"
-            )
-
-        if has_rel:
-            latex_document += (
-                "\\subsection{Relative Improvement over ERL Baseline}\n"
-                "\\begin{figure}[H]\n\\centering\n"
-                "  \\includegraphics[width=\\textwidth]{relative_improvement.png}\n"
-                "  \\caption{Per-step relative improvement of SC-ERL variants over the "
-                "mean ERL reward curve: $(r_{\\text{method}}(t) - r_{\\text{ERL}}(t))\\,/\\,"
-                "|r_{\\text{ERL}}(t)|$. "
-                "The denominator is floored at the 70th percentile of $|r_{\\text{ERL}}|$ "
-                "to suppress zero-crossing artefacts early in training. "
-                "Shaded band: $\\pm 1$ std across seeds. "
-                "Dashed grey line at $y=0$ marks the ERL level.}\n"
-                "\\end{figure}\n"
-            )
-
         latex_document += "\\newpage\n"
 
     latex_document += "\\end{document}\n"
