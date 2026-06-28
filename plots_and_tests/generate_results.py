@@ -862,6 +862,11 @@ def build_significance_table_latex(env_id, stable_values):
                 continue
         tex += "\\hline\n"
 
+    present = [b for b in baselines if len([v for v in stable_values.get(b, []) if not np.isnan(v)]) >= 2]
+    missing = [b for b in baselines if b not in present]
+    if missing:
+        missing_labels = ", ".join(METHOD_LABELS.get(m, m) for m in missing)
+        tex += f"\\multicolumn{{5}}{{l}}{{\\small\\textit{{Omitted (no data): {missing_labels}}}}} \\\\\n"
     tex += "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
     return tex if has_rows else "% Insufficient data for statistical testing\n"
 
@@ -979,6 +984,7 @@ def build_nemenyi_ranking_table_latex(all_stable_values, environments):
     tex = "\\begin{table}[htbp]\n\\centering\n"
     tex += f"\\caption{{{caption}}}\n"
     tex += "\\label{tab:nemenyi_rankings}\n"
+    tex += "\\resizebox{\\textwidth}{!}{%\n"
     tex += f"\\begin{{tabular}}{{l{'c' * (len(environments) + 1)}}}\n\\toprule\n"
     tex += f"\\textbf{{Method}} & {env_cols} & \\textbf{{Avg.~Rank}} \\\\\n\\midrule\n"
 
@@ -1004,7 +1010,7 @@ def build_nemenyi_ranking_table_latex(all_stable_values, environments):
         else:
             tex += f"{label} & {' & '.join(cells)} & {avg_str} \\\\\n"
 
-    tex += "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
+    tex += "\\bottomrule\n\\end{tabular}\n}\n\\end{table}\n"
     return tex
 
 
