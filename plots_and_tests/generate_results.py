@@ -799,18 +799,39 @@ def build_summary_table_latex(env_id, base_dir="."):
     return tex
 
 
-def build_significance_table_latex(env_id, stable_values):
+def holm_bonferroni(pvalues, alpha=0.05):
+    """Holm-Bonferroni step-down correction for multiple comparisons.
+
+    Given ``m`` raw p-values, returns ``(adjusted_pvalues, reject)`` in the SAME
+    order as the input. Procedure: sort ascending ``p_(1) <= ... <= p_(m)``; the
+    ``i``-th smallest is compared against ``alpha / (m - i + 1)``. Equivalently the
+    monotone-enforced adjusted p-value is
+    ``p_adj_(i) = max_{j<=i} min((m - j + 1) * p_(j), 1)`` and hypothesis ``i`` is
+    rejected at family-wise error rate ``alpha`` iff ``p_adj_i < alpha``.
+
+    Holm-Bonferroni is uniformly more powerful than plain Bonferroni while still
+    controlling the family-wise error rate, which matters here because each
+    environment's significance table runs up to |PROPOSED| x |baselines| pairwise
+    tests as a single family.
+    """
+    m = len(pvalues)
+    if m == 0:
+        return [], []
+    order = sorted(range(m), key=lambda i: pvalues[i])
+    adj = [0.0] * m
+    running_max = 0.0
+    for rank, idx in enumerate(order):
+        running_max = max(running_max, min((m - rank) * pvalues[idx], 1.0))
+        adj[idx] = running_max
+    reject = [adj[i] < alpha for i in range(m)]
+    return adj, reject
+
+
+def build_significance_table_latex(env_id, stable_values, alpha=0.05):
     baselines = ["ppo", "td3", "ddpg", "sac", "crossq", "erl", "sc_erl_random"]
 
-    tex = "\\begin{table}[htbp]\n\\centering\n"
-    tex += f"\\caption{{Statistical Significance Testing for \\texttt{{{
-        env_id
-    }}} (Proposed vs Baselines).}}\n"
-    tex += f"\\label{{tab:sig_{env_id}}}\n"
-    tex += "\\begin{tabular}{llccc}\n\\toprule\n"
-    tex += "\\textbf{Proposed Method} & \\textbf{Baseline} & \\textbf{Test Type} & \\textbf{$p$-value} & \\textbf{Sig.} \\\\\n\\midrule\n"
-
-    has_rows = False
+    # --- Pass 1: collect every valid pairwise comparison as one family ---
+    comparisons = []  # (ours, base, test_name, raw_p)
     for ours in PROPOSED_METHODS:
         group_A = np.array(stable_values.get(ours, []))
         group_A = group_A[~np.isnan(group_A)]
@@ -843,29 +864,64 @@ def build_significance_table_latex(env_id, stable_values):
                     p_val = stats.mannwhitneyu(
                         group_A, group_B, alternative="two-sided"
                     )[1]
-
-                sig = (
-                    "***"
-                    if p_val < 0.001
-                    else ("**" if p_val < 0.01 else ("*" if p_val < 0.05 else "ns"))
-                )
-                p_str = f"{p_val:.4e}" if p_val < 0.001 else f"{p_val:.4f}"
-
-                tex += f"{METHOD_LABELS.get(ours, ours)} & {
-                    METHOD_LABELS.get(base, base)
-                } & {test_name} & {p_str} & \\textbf{{{sig}}} \\\\\n"
-                has_rows = True
+                comparisons.append((ours, base, test_name, float(p_val)))
             except Exception:
                 continue
+
+    if not comparisons:
+        return "% Insufficient data for statistical testing\n"
+
+    # --- Family-wise Holm-Bonferroni correction over all comparisons ---
+    raw_ps = [c[3] for c in comparisons]
+    adj_ps, rejects = holm_bonferroni(raw_ps, alpha=alpha)
+    m_tests = len(comparisons)
+
+    def _fmt_p(p):
+        return f"{p:.4e}" if p < 0.001 else f"{p:.4f}"
+
+    def _stars(padj, reject):
+        if not reject:
+            return "ns"
+        return "***" if padj < 0.001 else ("**" if padj < 0.01 else "*")
+
+    tex = "\\begin{table}[htbp]\n\\centering\n"
+    tex += (
+        f"\\caption{{Statistical Significance Testing for \\texttt{{{env_id}}} "
+        "(Proposed vs Baselines). $p$-values are adjusted with the "
+        f"Holm--Bonferroni step-down correction over the family of $m = {m_tests}$ "
+        "pairwise comparisons in this environment; significance (Sig.) is decided "
+        f"on $p_{{\\mathrm{{adj}}}}$ at family-wise $\\alpha = {alpha}$ "
+        "($^{*}p<0.05$, $^{**}p<0.01$, $^{***}p<0.001$, ns~=~not significant).}}\n"
+    )
+    tex += f"\\label{{tab:sig_{env_id}}}\n"
+    tex += "\\begin{tabular}{llcccc}\n\\toprule\n"
+    tex += (
+        "\\textbf{Proposed Method} & \\textbf{Baseline} & \\textbf{Test Type} & "
+        "\\textbf{Raw $p$} & \\textbf{Holm $p_{\\mathrm{adj}}$} & \\textbf{Sig.} "
+        "\\\\\n\\midrule\n"
+    )
+
+    for ours in PROPOSED_METHODS:
+        rows = [i for i, c in enumerate(comparisons) if c[0] == ours]
+        if not rows:
+            continue
+        for i in rows:
+            _, base, test_name, raw_p = comparisons[i]
+            sig = _stars(adj_ps[i], rejects[i])
+            tex += (
+                f"{METHOD_LABELS.get(ours, ours)} & {METHOD_LABELS.get(base, base)} "
+                f"& {test_name} & {_fmt_p(raw_p)} & {_fmt_p(adj_ps[i])} "
+                f"& \\textbf{{{sig}}} \\\\\n"
+            )
         tex += "\\hline\n"
 
     present = [b for b in baselines if len([v for v in stable_values.get(b, []) if not np.isnan(v)]) >= 2]
     missing = [b for b in baselines if b not in present]
     if missing:
         missing_labels = ", ".join(METHOD_LABELS.get(m, m) for m in missing)
-        tex += f"\\multicolumn{{5}}{{l}}{{\\small\\textit{{Omitted (no data): {missing_labels}}}}} \\\\\n"
+        tex += f"\\multicolumn{{6}}{{l}}{{\\small\\textit{{Omitted (no data): {missing_labels}}}}} \\\\\n"
     tex += "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
-    return tex if has_rows else "% Insufficient data for statistical testing\n"
+    return tex
 
 
 def build_correlation_table_latex(env_id, corr_data):

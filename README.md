@@ -148,6 +148,12 @@ task report
 
 Runs `plots_and_tests/generate_results.py` — compiles WandB metrics, statistical tests, and PDF report.
 
+#### Statistical methodology
+
+Because each environment is compared across many algorithms, the per-environment significance tables run a **family** of up to `|proposed| × |baselines|` pairwise tests (3 SC-ERL variants × 7 baselines = 21). Each pair uses a Welch *t*-test when both groups pass a Shapiro–Wilk normality check, otherwise the Mann–Whitney *U* test.
+
+To control the family-wise error rate under this many comparisons, all raw *p*-values within one environment's table are corrected with the **Holm–Bonferroni step-down procedure** (`holm_bonferroni` in `generate_results.py`). Holm–Bonferroni is uniformly more powerful than plain Bonferroni while still bounding the probability of *any* false positive at `α = 0.05`. The tables report both the raw *p* and the adjusted `p_adj`, and significance stars (`*/**/***`) are decided on `p_adj`. Cross-environment comparisons are handled separately by the Friedman omnibus test + Nemenyi critical-difference diagram.
+
 ### Clean
 
 ```bash
