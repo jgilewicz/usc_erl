@@ -6,11 +6,6 @@ vars:
   ALGO: erl
   ENV: HalfCheetah-v5
   MODE: dropout
-  BACKBONE: td3
-  N_TRIALS: "30"
-  N_STEPS: "200000"
-  SAMPLER: tpe
-  BASE_STUDY: ""  # Stage 2 only: path to Stage 1 .db file
 
 tasks:
   default:
@@ -24,7 +19,7 @@ tasks:
     cmds:
       - uv run python entry_point.py algorithm={{.ALGO}} {{.CLI_ARGS}}
 
-  run-parallel:
+  run-parallel-mujoco:
     desc: "Run all 10 algorithms across all 5 MuJoCo environments (all 5 seeds) in parallel"
     vars:
       PARALLEL: '{{default "4" .PARALLEL}}'
@@ -80,28 +75,6 @@ tasks:
 
         generate_commands | shuf | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/run_$$.out 2>&1'
 
-  run-dmc:
-    desc: "Run sc_erl on a DMC dog task (e.g. task run-dmc ENV=dm_control/dog-stand-v0 MODE=ensemble)"
-    vars:
-      DMC_ENV: '{{default "dm_control/dog-stand-v0" .ENV}}'
-      DMC_MODE: '{{default "ensemble" .MODE}}'
-    cmds:
-      - |
-        SLUG=$(echo "{{.DMC_ENV}}" | tr '/' '_' | tr ':' '_')
-        RUN_NAME="sc_erl_{{.DMC_MODE}}_${SLUG}_seed{{default "0" .SEED}}"
-        uv run python entry_point.py \
-          algorithm=sc_erl \
-          surrogate.mode={{.DMC_MODE}} \
-          seed={{default "0" .SEED}} \
-          env.id={{.DMC_ENV}} \
-          eval_env.id={{.DMC_ENV}} \
-          env.backend=fancy_gym \
-          eval_env.backend=fancy_gym \
-          n_steps=1000000 \
-          wandb.enabled=true \
-          "wandb.name=${RUN_NAME}" \
-          "wandb.tags=[DMC,sc_erl,{{.DMC_MODE}}]" \
-          "hydra.run.dir=outputs/${RUN_NAME}"
 
   run-parallel-dmc:
     desc: "Run all 10 algorithms across all 5 DMC dog tasks (all 5 seeds) in parallel"
@@ -167,48 +140,20 @@ tasks:
         }
 
         generate_commands | shuf | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/run_$$.out 2>&1'
-
-  tune-stage1:
-    desc: "Stage 1: tune shared + backbone + dropout params (e.g. task tune-stage1 ENV=Ant-v5)"
-    cmds:
-      - uv run python optim/tune_sc_erl.py --env {{.ENV}} --mode dropout --backbone {{.BACKBONE}} --n-trials {{.N_TRIALS}} --n-steps {{.N_STEPS}} --sampler {{.SAMPLER}}
-
-  tune-stage2:
-    desc: "Stage 2: tune evidential + ensemble in parallel (requires BASE_STUDY=optuna_dropout_<env>.db)"
-    vars:
-      PARALLEL: '{{default "2" .PARALLEL}}'
-    cmds:
-      - |
-        set -euo pipefail
-        if [ -z "{{.BASE_STUDY}}" ]; then
-          echo "ERROR: BASE_STUDY is required for Stage 2. Example: task tune-stage2 BASE_STUDY=optuna_dropout_HalfCheetah-v5.db"
-          exit 1
-        fi
-        mkdir -p logs
-        for MODE in evidential ensemble; do
-          echo "uv run python optim/tune_sc_erl.py \
-            --env {{.ENV}} \
-            --mode ${MODE} \
-            --backbone {{.BACKBONE}} \
-            --n-trials {{.N_TRIALS}} \
-            --n-steps {{.N_STEPS}} \
-            --sampler {{.SAMPLER}} \
-            --base-study {{.BASE_STUDY}}"
-        done | xargs -P {{.PARALLEL}} -I CMD bash -c 'CMD >> logs/tune_$$.out 2>&1'
-
+ 
   clean:
     desc: "Clean outputs, Hydra logs, training results, downloaded metrics, and compiled reports"
     cmds:
-      - rm -rf outputs .hydra results wandb logs *.pdf optuna_*.db
+      - rm -rf outputs .hydra results wandb logs *.pdf
       - |
         for folder in eval_reward rl_reward best_population_fitness avg_population_fitness \
                       uncertainty_mean uncertainty_max uncertainty_threshold \
                       critic_loss total_steps generation summary \
-                      raw_sigma_mean raw_sigma_max results_output; do
+                      raw_sigma_mean raw_sigma_max results_output surrogate_ratio; do
           rm -rf plots_and_tests/$folder
         done
 
   report:
     desc: "Generate all plots, statistical tables, Markdown and PDF reports (full pipeline)"
     cmds:
-      - uv run python plots_and_tests/generate_results.py
+      - uv run python plots_and_tests/download_results.py && run python plots_and_tests/generate_results.py

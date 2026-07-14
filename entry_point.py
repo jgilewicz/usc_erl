@@ -133,6 +133,9 @@ def main(cfg: DictConfig) -> None:
             debug=cfg.debug,
             grad_clip_norm=cfg.grad_clip_norm,
             mutation_fraction=cfg.evolution.mutation_fraction,
+            backbone=cfg.get("backbone", "ddpg"),
+            policy_delay=cfg.rl.get("policy_delay", 2),
+            bn_momentum=cfg.rl.get("bn_momentum", 0.01),
         )
     elif cfg.name == "td3":
         result = TD3(
@@ -222,6 +225,7 @@ def main(cfg: DictConfig) -> None:
             policy_delay=cfg.rl.policy_delay,
             policy_noise=cfg.rl.policy_noise,
             noise_clip=cfg.rl.noise_clip,
+            bn_momentum=cfg.rl.get("bn_momentum", 0.01),
             mad_k=cfg.surrogate.mad_k,
             beta_lr=cfg.surrogate.beta_lr,
         )

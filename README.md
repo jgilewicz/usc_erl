@@ -6,7 +6,7 @@ Master's research repository implementing a modular hybrid framework combining d
 
 The central contribution is **SC-ERL** — a novel algorithm that gates genetic algorithm fitness evaluations using a learned critic as a surrogate. Instead of running every candidate policy through slow environment rollouts, the surrogate estimates fitness at near-zero cost. Epistemic uncertainty determines when the surrogate is trusted versus when a real rollout is triggered.
 
-Baselines included: DDPG, TD3, PPO, SAC, CrossQ (all via Stable-Baselines3 / PyTorch), canonical ERL (configured with distilled crossover), and WIMLE (JAX — world-model IQN with IMLE latent dynamics).
+Baselines included: DDPG, TD3, PPO, SAC, CrossQ (all via Stable-Baselines3 / PyTorch), and canonical ERL (configured with distilled crossover).
 
 ---
 
@@ -23,7 +23,7 @@ ue_sc_erl/
 │       ├── ddpg.yaml, ppo.yaml, td3.yaml, erl.yaml
 │       ├── sc_erl.yaml             # Surrogate parameters (beta, dropout_p, omega, k)
 │       ├── erl/<env>.yaml          # Environment-specific ERL overrides
-│       └── sc_erl/<env>.yaml       # Environment-specific SC-ERL overrides (Optuna output)
+│       └── sc_erl/<env>.yaml       # Environment-specific SC-ERL overrides
 ├── src/
 │   ├── algorithms/
 │   │   ├── DDPG/, PPO/, TD3/       # Classical continuous control baselines (PyTorch)
@@ -41,14 +41,6 @@ ue_sc_erl/
 │       ├── ensemble_module.py      # Multi-critic ensemble with prediction std
 │       ├── evolution_module.py     # Elite preservation, selection, sparse mutation
 │       └── mc_dropout_module.py    # MC Dropout runner for epistemic variance
-├── wimle/                          # WIMLE baseline (JAX, own venv)
-│   ├── train_parallel.py           # Training entry-point (absl flags)
-│   ├── hps.py                      # Hyperparameter flag definitions
-│   └── jaxrl/                      # JAX RL primitives (IQN critic, IMLE world-model)
-├── slurm_run_wimle.sh              # SLURM array for WIMLE (10 envs × 5 seeds)
-├── optim/
-│   ├── tune_sc_erl.py              # Two-stage Optuna tuning script
-│   └── slurm_tune.sh               # SLURM job submission for tuning
 └── plots_and_tests/
     ├── generate_results.py         # Full reporting pipeline (plots + stats + LaTeX)
     └── download_results.py         # Download metrics from WandB
@@ -82,9 +74,35 @@ pip install -e .
 task run ALGO=sc_erl CLI_ARGS="env.id=HalfCheetah-v5 surrogate.mode=dropout"
 ```
 
-Supported `ALGO` values: `sc_erl`, `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq`. For WIMLE see the dedicated SLURM script below.
+Supported `ALGO` values: `sc_erl`, `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq`.
 
 SC-ERL `surrogate.mode` options: `dropout`, `ensemble`, `evidential`, `random`.
+
+### RL backbone (`ddpg` / `td3` / `crossq`)
+
+`sc_erl` and `erl` pick their RL learner via `backbone`. The `crossq` backbone is a **native** CrossQ learner (BatchRenorm critic, no target networks — not the standalone SB3 `crossq` baseline). It works with all four surrogate modes.
+
+**MuJoCo:**
+
+```bash
+# ERL with CrossQ backbone
+task run ALGO=erl CLI_ARGS="backbone=crossq env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5"
+
+# SC-ERL with CrossQ backbone (choose surrogate.mode: random | dropout | ensemble | evidential)
+task run ALGO=sc_erl CLI_ARGS="backbone=crossq surrogate.mode=ensemble env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5"
+```
+
+**DMC dog** (backend auto-detected from the `dm_control/` prefix; set explicitly to be safe):
+
+```bash
+# ERL with CrossQ backbone on DMC
+task run ALGO=erl CLI_ARGS="backbone=crossq env.id=dm_control/dog-stand-v0 eval_env.id=dm_control/dog-stand-v0 env.backend=fancy_gym eval_env.backend=fancy_gym"
+
+# SC-ERL with CrossQ backbone on DMC
+task run ALGO=sc_erl CLI_ARGS="backbone=crossq surrogate.mode=ensemble env.id=dm_control/dog-stand-v0 eval_env.id=dm_control/dog-stand-v0 env.backend=fancy_gym eval_env.backend=fancy_gym"
+```
+
+Tune BatchRenorm momentum with `rl.bn_momentum` (default `0.01`).
 
 ### Full experiment matrix (5 envs × 8 algo variants × 5 seeds, parallelized)
 
@@ -120,19 +138,6 @@ TARGET_ENV=dm_control/dog-walk-v0  sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-trot-v0  sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-run-v0   sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-fetch-v0 sbatch --array=0-19 slurm_run_array.sh
-```
-
-### WIMLE (cluster only)
-
-50 tasks (10 envs × 5 seeds). Uses a separate JAX venv inside `wimle/`.
-
-```bash
-sbatch --array=0-49 slurm_run_wimle.sh
-```
-
-Override steps or parallel env count:
-```bash
-N_STEPS=2000000 NUM_SEEDS=4 sbatch --array=0-49 slurm_run_wimle.sh
 ```
 
 ### Reports
@@ -176,6 +181,8 @@ Key parameters in `configs/algorithm/sc_erl.yaml`:
 
 | Parameter | Description |
 |-----------|-------------|
+| `backbone` | RL learner: `ddpg` (default), `td3`, or `crossq` (native BatchRenorm CrossQ) |
+| `rl.bn_momentum` | BatchRenorm momentum for the `crossq` backbone (default: `0.01`) |
 | `surrogate.mode` | Uncertainty method: `dropout`, `ensemble`, `evidential`, `random` |
 | `surrogate.beta` | LCB penalty weight (higher → more real rollouts) |
 | `surrogate.omega` | Percentile threshold for gating (default: 75) |

@@ -6,10 +6,12 @@ import torch
 
 from modules.ensemble_module import EnsembleModule
 from modules.evolution_module import EvolutionModule
-from modules.deep_modules import Actor, Critic, EvidentialCritic
+from modules.deep_modules import Actor, Critic, EvidentialCritic, BatchNormCritic
 from common.reply_buffer import Buffer
 from common.surrogate_controller import SurrogateController, SurrogateMode
 from common.utils import (
+    crossq_train_critics,
+    crossq_update_actor,
     evaluate_policy,
     print_sc_erl_debug_summary,
     rollout_policy,
@@ -63,10 +65,11 @@ def SC_ERL(
     mutation_fraction: float = 0.1,
     mad_k: float = 2.0,
     beta_lr: float = 1e-3,
-    backbone: str = "ddpg",  # "ddpg" or "td3"
-    policy_delay: int = 2,  # TD3 only
+    backbone: str = "ddpg",  # "ddpg", "td3", or "crossq"
+    policy_delay: int = 2,  # TD3 / CrossQ
     policy_noise: float = 0.2,  # TD3 only
     noise_clip: float = 0.5,  # TD3 only
+    bn_momentum: float = 0.01,  # CrossQ only — BatchNorm momentum
 ) -> float:
 
     state_dim = env.observation_space.shape[0]
@@ -102,71 +105,115 @@ def SC_ERL(
 
     target_actor.load_state_dict(actor.state_dict())
 
-    critic = Critic(
-        state_dim=state_dim,
-        action_dim=action_dim,
-        dropout=0.0,
-        activation="elu",
-    ).to(device)
-
-    target_critic = Critic(
-        state_dim=state_dim,
-        action_dim=action_dim,
-        dropout=0.0,
-        activation="elu",
-    ).to(device)
-
-    target_critic.load_state_dict(critic.state_dict())
-
-    # TODO: consider passing |Q1 - Q2| disagreement as epistemic uncertainty signal to SurrogateController
-    critic_2: Critic | None = None
-    critic_2_target: Critic | None = None
+    critic_2 = None
+    critic_2_target = None
     critic_2_optimizer = None
-    if backbone == "td3":
-        critic_2 = Critic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            dropout=0.0,
-            activation="elu",
-        ).to(device)
-        critic_2_target = Critic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            dropout=0.0,
-            activation="elu",
-        ).to(device)
-        critic_2_target.load_state_dict(critic_2.state_dict())
-        critic_2_optimizer = torch.optim.Adam(
-            critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
+
+    if backbone == "crossq":
+        target_critic = None
+        dropout_for_critic = (
+            dropout_p if surrogate_mode == SurrogateMode.DROPOUT else 0.0
         )
 
-    if surrogate_mode == SurrogateMode.ENSEMBLE:
-        critic = EnsembleModule(
-            ensemble_size=k_ensembles,
-            critic=critic,
-            rng=rng,
+        if surrogate_mode == SurrogateMode.ENSEMBLE:
+            critic = EnsembleModule(
+                ensemble_size=k_ensembles,
+                critic=BatchNormCritic(
+                    state_dim=state_dim,
+                    action_dim=action_dim,
+                    activation="elu",
+                    bn_momentum=bn_momentum,
+                ),
+                rng=rng,
+            ).to(device)
+        elif surrogate_mode == SurrogateMode.EVIDENTIAL:
+            critic = EvidentialCritic(
+                state_dim=state_dim,
+                action_dim=action_dim,
+                use_bn=True,
+                bn_momentum=bn_momentum,
+            ).to(device)
+        else:
+            critic = BatchNormCritic(
+                state_dim=state_dim,
+                action_dim=action_dim,
+                activation="elu",
+                bn_momentum=bn_momentum,
+                dropout=dropout_for_critic,
+            ).to(device)
+            critic_2 = BatchNormCritic(
+                state_dim=state_dim,
+                action_dim=action_dim,
+                activation="elu",
+                bn_momentum=bn_momentum,
+                dropout=dropout_for_critic,
+            ).to(device)
+            critic_2_optimizer = torch.optim.Adam(
+                critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
+            )
+    else:
+        critic = Critic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            dropout=0.0,
+            activation="elu",
         ).to(device)
 
-        target_critic = EnsembleModule(
-            ensemble_size=k_ensembles,
-            critic=target_critic,
-            rng=rng,
+        target_critic = Critic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            dropout=0.0,
+            activation="elu",
         ).to(device)
 
         target_critic.load_state_dict(critic.state_dict())
 
-    if surrogate_mode == SurrogateMode.EVIDENTIAL:
-        critic = EvidentialCritic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-        ).to(device)
+        # TODO: consider passing |Q1 - Q2| disagreement as epistemic uncertainty signal to SurrogateController
+        if backbone == "td3":
+            critic_2 = Critic(
+                state_dim=state_dim,
+                action_dim=action_dim,
+                dropout=0.0,
+                activation="elu",
+            ).to(device)
+            critic_2_target = Critic(
+                state_dim=state_dim,
+                action_dim=action_dim,
+                dropout=0.0,
+                activation="elu",
+            ).to(device)
+            critic_2_target.load_state_dict(critic_2.state_dict())
+            critic_2_optimizer = torch.optim.Adam(
+                critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
+            )
 
-        target_critic = EvidentialCritic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-        ).to(device)
+        if surrogate_mode == SurrogateMode.ENSEMBLE:
+            critic = EnsembleModule(
+                ensemble_size=k_ensembles,
+                critic=critic,
+                rng=rng,
+            ).to(device)
 
-        target_critic.load_state_dict(critic.state_dict())
+            target_critic = EnsembleModule(
+                ensemble_size=k_ensembles,
+                critic=target_critic,
+                rng=rng,
+            ).to(device)
+
+            target_critic.load_state_dict(critic.state_dict())
+
+        if surrogate_mode == SurrogateMode.EVIDENTIAL:
+            critic = EvidentialCritic(
+                state_dim=state_dim,
+                action_dim=action_dim,
+            ).to(device)
+
+            target_critic = EvidentialCritic(
+                state_dim=state_dim,
+                action_dim=action_dim,
+            ).to(device)
+
+            target_critic.load_state_dict(critic.state_dict())
 
     replay_buffer = Buffer(
         capacity=buffer_size,
@@ -305,6 +352,31 @@ def SC_ERL(
                         soft_update(target_critic, critic, tau=tau)
                         soft_update(critic_2_target, critic_2, tau=tau)
                         soft_update(target_actor, actor, tau=tau)
+
+                elif backbone == "crossq":
+                    critic_loss = crossq_train_critics(
+                        actor=actor,
+                        critic_1=critic,
+                        critic_2=critic_2,
+                        critic_1_optimizer=critic_optimizer,
+                        critic_2_optimizer=critic_2_optimizer,
+                        replay_buffer=replay_buffer,
+                        batch_size=batch_size,
+                        gamma=gamma,
+                        device=device,
+                        grad_clip_norm=grad_clip_norm,
+                        lam=lam,
+                    )
+                    if update_idx % policy_delay == 0:
+                        actor_loss = crossq_update_actor(
+                            actor=actor,
+                            critic_1=critic,
+                            actor_optimizer=actor_optimizer,
+                            replay_buffer=replay_buffer,
+                            batch_size=batch_size,
+                            device=device,
+                            grad_clip_norm=grad_clip_norm,
+                        )
                 else:
                     critic_loss = train_critic_step(
                         target_actor=target_actor,

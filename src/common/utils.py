@@ -491,6 +491,114 @@ def td3_update_actor(
     return actor_loss.item()
 
 
+def crossq_train_critics(
+    actor: Actor,
+    critic_1: nn.Module,
+    critic_2: nn.Module | None,
+    critic_1_optimizer: torch.optim.Optimizer,
+    critic_2_optimizer: torch.optim.Optimizer | None,
+    replay_buffer: Buffer,
+    batch_size: int,
+    gamma: float,
+    device: torch.device,
+    grad_clip_norm: float = 1.0,
+    lam: float = 0.1,
+) -> float:
+    critic_1.train()
+    if critic_2 is not None:
+        critic_2.train()
+
+    batch = replay_buffer.sample(batch_size)
+    state = batch["state"].to(device)
+    action = batch["action"].to(device)
+    reward = batch["reward"].to(device)
+    next_state = batch["next_state"].to(device)
+    done = batch["done"].to(device)
+
+    b = state.shape[0]
+
+    with torch.no_grad():
+        next_action = actor(next_state)
+
+    cat_state = torch.cat([state, next_state], dim=0)
+    cat_action = torch.cat([action, next_action], dim=0)
+
+    if hasattr(critic_1, "crossq_compute_loss"):
+        critic_loss = critic_1.crossq_compute_loss(
+            cat_state, cat_action, reward, done, gamma, b
+        )
+        critic_1_optimizer.zero_grad()
+        critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(critic_1.parameters(), grad_clip_norm)
+        critic_1_optimizer.step()
+        return critic_loss.item()
+
+    out1 = critic_1(cat_state, cat_action)
+
+    if isinstance(out1, tuple) and len(out1) == 4:
+        mu, v, alpha, beta = out1
+        next_mu = mu[b:].detach()
+        target = reward + (1.0 - done) * gamma * next_mu
+        critic_loss = evidential_loss(
+            target, mu[:b], v[:b], alpha[:b], beta[:b], lam=lam
+        )
+        critic_1_optimizer.zero_grad()
+        critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(critic_1.parameters(), grad_clip_norm)
+        critic_1_optimizer.step()
+        return critic_loss.item()
+
+    q1_all = _unwrap_q(out1)
+    q2_all = _unwrap_q(critic_2(cat_state, cat_action))
+
+    current_q1, next_q1 = q1_all[:b], q1_all[b:]
+    current_q2, next_q2 = q2_all[:b], q2_all[b:]
+
+    next_q = torch.min(next_q1, next_q2).detach()
+    target = reward + (1.0 - done) * gamma * next_q
+
+    critic_loss = F.mse_loss(current_q1, target) + F.mse_loss(current_q2, target)
+
+    critic_1_optimizer.zero_grad()
+    critic_2_optimizer.zero_grad()
+
+    critic_loss.backward()
+
+    torch.nn.utils.clip_grad_norm_(critic_1.parameters(), grad_clip_norm)
+    torch.nn.utils.clip_grad_norm_(critic_2.parameters(), grad_clip_norm)
+
+    critic_1_optimizer.step()
+    critic_2_optimizer.step()
+
+    return critic_loss.item()
+
+
+def crossq_update_actor(
+    actor: Actor,
+    critic_1: nn.Module,
+    actor_optimizer: torch.optim.Optimizer,
+    replay_buffer: Buffer,
+    batch_size: int,
+    device: torch.device,
+    grad_clip_norm: float = 1.0,
+) -> float:
+    batch = replay_buffer.sample(batch_size)
+    state = batch["state"].to(device)
+
+    was_training = critic_1.training
+    critic_1.eval()
+    actor_loss = -_unwrap_q(critic_1(state, actor(state))).mean()
+    if was_training:
+        critic_1.train()
+
+    actor_optimizer.zero_grad()
+    actor_loss.backward()
+    torch.nn.utils.clip_grad_norm_(actor.parameters(), grad_clip_norm)
+    actor_optimizer.step()
+
+    return actor_loss.item()
+
+
 def surrogate_fitness(
     population: list[nn.Module],
     critic: nn.Module,

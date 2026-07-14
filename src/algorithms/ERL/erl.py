@@ -3,11 +3,13 @@ import numpy as np
 import gymnasium as gym
 from collections import deque
 
-from modules.deep_modules import Actor, Critic
+from modules.deep_modules import Actor, BatchNormCritic, Critic
 from common.reply_buffer import Buffer
 from modules.evolution_module import EvolutionModule
 from common.wandb_logger import WandbLogger
 from common.utils import (
+    crossq_train_critics,
+    crossq_update_actor,
     train_critic_step,
     train_actor_step,
     warmup,
@@ -47,6 +49,9 @@ def ERL(
     debug: bool = False,
     grad_clip_norm: float = 1.0,
     mutation_fraction: float = 0.1,
+    backbone: str = "ddpg",  # "ddpg" or "crossq"
+    policy_delay: int = 2,  # CrossQ only
+    bn_momentum: float = 0.01,  # CrossQ only — BatchNorm momentum
 ) -> float:
 
     state_dim = env.observation_space.shape[0]
@@ -82,21 +87,42 @@ def ERL(
 
     target_actor.load_state_dict(actor.state_dict())
 
-    critic = Critic(
-        state_dim=state_dim,
-        action_dim=action_dim,
-        dropout=0.0,
-        activation="elu",
-    ).to(device)
+    critic_2 = None
+    critic_2_optimizer = None
+    if backbone == "crossq":
+        critic = BatchNormCritic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            activation="elu",
+            bn_momentum=bn_momentum,
+        ).to(device)
+        critic_2 = BatchNormCritic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            activation="elu",
+            bn_momentum=bn_momentum,
+        ).to(device)
+        # CrossQ has no target networks.
+        target_critic = None
+        critic_2_optimizer = torch.optim.Adam(
+            critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
+        )
+    else:
+        critic = Critic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            dropout=0.0,
+            activation="elu",
+        ).to(device)
 
-    target_critic = Critic(
-        state_dim=state_dim,
-        action_dim=action_dim,
-        dropout=0.0,
-        activation="elu",
-    ).to(device)
+        target_critic = Critic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            dropout=0.0,
+            activation="elu",
+        ).to(device)
 
-    target_critic.load_state_dict(critic.state_dict())
+        target_critic.load_state_dict(critic.state_dict())
 
     replay_buffer = Buffer(
         capacity=buffer_size,
@@ -191,7 +217,32 @@ def ERL(
                 if frac_frames_train > 0.0
                 else gradient_steps
             )
-            for _ in range(num_updates):
+            for update_idx in range(num_updates):
+                if backbone == "crossq":
+                    critic_loss = crossq_train_critics(
+                        actor=actor,
+                        critic_1=critic,
+                        critic_2=critic_2,
+                        critic_1_optimizer=critic_optimizer,
+                        critic_2_optimizer=critic_2_optimizer,
+                        replay_buffer=replay_buffer,
+                        batch_size=batch_size,
+                        gamma=gamma,
+                        device=device,
+                        grad_clip_norm=grad_clip_norm,
+                    )
+                    if update_idx % policy_delay == 0:
+                        actor_loss = crossq_update_actor(
+                            actor=actor,
+                            critic_1=critic,
+                            actor_optimizer=actor_optimizer,
+                            replay_buffer=replay_buffer,
+                            batch_size=batch_size,
+                            device=device,
+                            grad_clip_norm=grad_clip_norm,
+                        )
+                    continue
+
                 critic_loss = train_critic_step(
                     target_actor=target_actor,
                     critic=critic,

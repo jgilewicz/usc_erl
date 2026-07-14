@@ -3,6 +3,71 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class BatchRenorm1d(nn.Module):
+    def __init__(
+        self,
+        num_features: int,
+        momentum: float = 0.01,
+        eps: float = 1e-3,
+        r_max: float = 3.0,
+        d_max: float = 5.0,
+        warmup_steps: int = 100_000,
+    ) -> None:
+        super().__init__()
+        self.num_features = num_features
+        self.momentum = momentum
+        self.eps = eps
+        self.r_max = r_max
+        self.d_max = d_max
+        self.warmup_steps = warmup_steps
+
+        self.weight = nn.Parameter(torch.ones(num_features))
+        self.bias = nn.Parameter(torch.zeros(num_features))
+        self.register_buffer("running_mean", torch.zeros(num_features))
+        self.register_buffer("running_var", torch.ones(num_features))
+        self.register_buffer("num_batches_tracked", torch.tensor(0, dtype=torch.long))
+
+    def reset_parameters(self) -> None:
+        nn.init.ones_(self.weight)
+        nn.init.zeros_(self.bias)
+        self.running_mean.zero_()
+        self.running_var.fill_(1.0)
+        self.num_batches_tracked.zero_()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            batch_mean = x.mean(dim=0)
+            batch_var = x.var(dim=0, unbiased=False)
+            batch_std = torch.sqrt(batch_var + self.eps)
+            running_std = torch.sqrt(self.running_var + self.eps)
+
+            if self.warmup_steps > 0:
+                ramp = min(
+                    1.0, float(self.num_batches_tracked.item()) / self.warmup_steps
+                )
+            else:
+                ramp = 1.0
+            r_max = 1.0 + (self.r_max - 1.0) * ramp
+            d_max = self.d_max * ramp
+
+            r = (batch_std.detach() / running_std).clamp(1.0 / r_max, r_max)
+            d = ((batch_mean.detach() - self.running_mean) / running_std).clamp(
+                -d_max, d_max
+            )
+
+            x_hat = (x - batch_mean) / batch_std * r + d
+
+            with torch.no_grad():
+                self.running_mean += self.momentum * (batch_mean - self.running_mean)
+                self.running_var += self.momentum * (batch_var - self.running_var)
+                self.num_batches_tracked += 1
+        else:
+            running_std = torch.sqrt(self.running_var + self.eps)
+            x_hat = (x - self.running_mean) / running_std
+
+        return self.weight * x_hat + self.bias
+
+
 class Actor(nn.Module):
     def __init__(
         self,
@@ -65,6 +130,45 @@ class Critic(nn.Module):
             nn.Dropout(p=dropout),
             nn.Linear(dim2, dim2),
             nn.LayerNorm(dim2),
+            act_layer,
+            nn.Dropout(p=dropout),
+            nn.Linear(dim2, 1),
+        )
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        state_features = self.state_net(state)
+        x = torch.cat([state_features, action], dim=-1)
+        return self.net(x)
+
+
+class BatchNormCritic(nn.Module):
+    def __init__(
+        self,
+        state_dim: int,
+        action_dim: int,
+        activation: str = "relu",
+        hidden_dims: list[int] = [400, 300],
+        bn_momentum: float = 0.01,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+
+        act_layer = nn.ELU() if activation.lower() == "elu" else nn.ReLU()
+        dim1, dim2 = hidden_dims[0], hidden_dims[1]
+
+        self.state_net = nn.Sequential(
+            nn.Linear(state_dim, dim1),
+            BatchRenorm1d(dim1, momentum=bn_momentum),
+            act_layer,
+        )
+
+        self.net = nn.Sequential(
+            nn.Linear(dim1 + action_dim, dim2),
+            BatchRenorm1d(dim2, momentum=bn_momentum),
+            act_layer,
+            nn.Dropout(p=dropout),
+            nn.Linear(dim2, dim2),
+            BatchRenorm1d(dim2, momentum=bn_momentum),
             act_layer,
             nn.Dropout(p=dropout),
             nn.Linear(dim2, 1),
@@ -150,22 +254,31 @@ class EvidentialCritic(nn.Module):
         state_dim: int,
         action_dim: int,
         hidden_dims: list[int] = [400, 300],
+        use_bn: bool = False,
+        bn_momentum: float = 0.01,
     ) -> None:
         super(EvidentialCritic, self).__init__()
         dim1, dim2 = hidden_dims[0], hidden_dims[1]
 
+        def norm(dim: int) -> nn.Module:
+            return (
+                BatchRenorm1d(dim, momentum=bn_momentum)
+                if use_bn
+                else nn.LayerNorm(dim)
+            )
+
         self.state_net = nn.Sequential(
             nn.Linear(state_dim, dim1),
-            nn.LayerNorm(dim1),
+            norm(dim1),
             nn.ReLU(),
         )
 
         self.net = nn.Sequential(
             nn.Linear(dim1 + action_dim, dim2),
-            nn.LayerNorm(dim2),
+            norm(dim2),
             nn.ReLU(),
             nn.Linear(dim2, dim2),
-            nn.LayerNorm(dim2),
+            norm(dim2),
             nn.ReLU(),
         )
 

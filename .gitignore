@@ -72,9 +72,6 @@ pytestdebug.log
 .task/
 task.lock
 
-# Optuna
-*.db
-
 # Results
 *.csv
 *.png

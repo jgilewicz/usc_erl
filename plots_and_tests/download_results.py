@@ -12,7 +12,6 @@ def normalize_env_id(env_id):
 
 
 def sanitize_env_id(env_id):
-    """Convert raw env IDs (dm_control/dog-stand-v0) to slug form (dm_control_dog-stand-v0)."""
     if not env_id:
         return env_id
     return env_id.replace("/", "_").replace(":", "_")
@@ -49,7 +48,6 @@ def determine_method_from_run(run):
         "sc_erl_dropout",
         "sc_erl_ensemble",
         "sc_erl_random",
-        "wimle",
         "crossq",
         "td3",
         "erl",
@@ -70,7 +68,7 @@ def determine_method_from_run(run):
         if "sc_erl_evidential" in tags:
             return "sc_erl_evidential"
         return "sc_erl_random"
-    for baseline in ["wimle", "crossq", "td3", "erl", "ppo", "ddpg", "sac"]:
+    for baseline in ["crossq", "td3", "erl", "ppo", "ddpg", "sac"]:
         if baseline in tags:
             return baseline
     return None
@@ -83,19 +81,11 @@ def determine_env_and_seed(run):
         env_id = cfg.get("env.id")
     if not env_id:
         env_id = cfg.get("env/id")
-    # WIMLE uses absl FLAGS: env_name + benchmark instead of Hydra env.id
-    if not env_id:
-        env_name = cfg.get("env_name")
-        benchmark = cfg.get("benchmark")
-        if env_name and benchmark == "dmc":
-            env_id = f"dm_control/{env_name}-v0"
-        elif env_name:
-            env_id = env_name
     seed = cfg.get("seed")
     run_name = run.name
     if not env_id or seed is None:
         match = re.match(
-            "^(?:sc_erl_evidential|sc_erl_dropout|sc_erl_ensemble|sc_erl_random|wimle|crossq|td3|erl|ppo|ddpg|sac)_([A-Za-z0-9\\-_]+)_seed(\\d+)",
+            "^(?:sc_erl_evidential|sc_erl_dropout|sc_erl_ensemble|sc_erl_random|crossq|td3|erl|ppo|ddpg|sac)_([A-Za-z0-9\\-_]+)_seed(\\d+)",
             run_name,
         )
         if match:
@@ -115,7 +105,9 @@ def main():
     entity = config.wandb.entity
     project = config.wandb.project
     allowed_algorithms = set(config.algorithms)
-    allowed_environments = {sanitize_env_id(normalize_env_id(e)) for e in config.environments}
+    allowed_environments = {
+        sanitize_env_id(normalize_env_id(e)) for e in config.environments
+    }
     print("Initializing WandB API...")
     api = wandb.Api()
     project_path = f"{entity}/{project}"

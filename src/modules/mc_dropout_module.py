@@ -13,6 +13,13 @@ class MCDropout:
                 submodule.p = p
 
     @staticmethod
+    def _enable_only_dropout(module: nn.Module) -> None:
+        module.eval()
+        for submodule in module.modules():
+            if isinstance(submodule, nn.Dropout):
+                submodule.train()
+
+    @staticmethod
     def make_dropout_critic(
         critic: Critic,
         dropout_p: float = 0.2,
@@ -36,7 +43,7 @@ class MCDropout:
         critic_was_training = critic.training
         policy_was_training = policy.training
 
-        critic.train()
+        MCDropout._enable_only_dropout(critic)
         policy.eval()
 
         try:
