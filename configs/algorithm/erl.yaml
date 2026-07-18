@@ -1,6 +1,6 @@
 # @package _global_
 name: erl
-backbone: ddpg  # "ddpg" or "crossq"
+backbone: ddpg  # "ddpg", "td3", or "crossq"
 buffer_size: 1000000
 n_steps: 1000000
 batch_size: 256
@@ -17,7 +17,9 @@ rl:
   exploration_noise_std: 0.1
   gradient_steps: 1
   frac_frames_train: 1.0
-  policy_delay: 1  # CrossQ backbone only
+  policy_delay: 1  # TD3 / CrossQ backbone
+  policy_noise: 0.2  # TD3 backbone only — target policy smoothing noise
+  noise_clip: 0.5  # TD3 backbone only — smoothing noise clip
   bn_momentum: 0.01  # CrossQ backbone only — BatchNorm momentum
 
 evolution:

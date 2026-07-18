@@ -135,6 +135,8 @@ def main(cfg: DictConfig) -> None:
             mutation_fraction=cfg.evolution.mutation_fraction,
             backbone=cfg.get("backbone", "ddpg"),
             policy_delay=cfg.rl.get("policy_delay", 2),
+            policy_noise=cfg.rl.get("policy_noise", 0.2),
+            noise_clip=cfg.rl.get("noise_clip", 0.5),
             bn_momentum=cfg.rl.get("bn_momentum", 0.01),
         )
     elif cfg.name == "td3":
