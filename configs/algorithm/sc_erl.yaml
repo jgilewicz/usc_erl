@@ -1,6 +1,5 @@
 # @package _global_
 name: sc_erl
-backbone: crossq  # "ddpg", "td3", or "crossq"
 buffer_size: 1000000
 n_steps: 1000000
 batch_size: 256
@@ -20,7 +19,6 @@ rl:
   policy_delay: 1
   policy_noise: 0.206
   noise_clip: 0.562
-  bn_momentum: 0.01  # CrossQ backbone only — BatchNorm momentum
 
 evolution:
   population_size: 10
@@ -43,7 +41,6 @@ surrogate:
   dropout_p: 0.387
   mc_samples: 25
   epsilon: 0.142
-  lam: 0.1
   mad_k: 2.483
   beta_lr: 1e-3
 

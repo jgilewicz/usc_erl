@@ -26,18 +26,19 @@ ue_sc_erl/
 │       └── sc_erl/<env>.yaml       # Environment-specific SC-ERL overrides
 ├── src/
 │   ├── algorithms/
-│   │   ├── DDPG/, PPO/, TD3/       # Classical continuous control baselines (PyTorch)
+│   │   ├── DDPG/, TD3/, PPO/       # Thin Stable-Baselines3 wrappers (PyTorch)
 │   │   ├── SAC/                    # SAC via Stable-Baselines3 (PyTorch)
 │   │   ├── CrossQ/                 # CrossQ via sb3-contrib — batch-norm critic (PyTorch)
-│   │   ├── ERL/                    # Canonical ERL (DDPG + GA with shared replay buffer)
+│   │   ├── ERL/                    # Canonical ERL (TD3 + GA with shared replay buffer)
 │   │   └── SC_ERL/                 # Novel uncertainty-gated surrogate-assisted ERL
 │   ├── common/
 │   │   ├── surrogate_controller.py # Epistemic uncertainty gating & Q-value normalization
+│   │   ├── sb3_callback.py         # Shared eval + WandB logging callback (all SB3 baselines)
 │   │   ├── utils.py                # Huber loss, soft-updates, parameter flattening
 │   │   ├── reply_buffer.py         # Experience replay (Transition & Buffer)
 │   │   └── wandb_logger.py         # WandB telemetry interface
 │   └── modules/
-│       ├── deep_modules.py         # Actor, Critic, StochasticActor, EvidentialCritic
+│       ├── deep_modules.py         # Actor, Critic, EvidentialCritic
 │       ├── ensemble_module.py      # Multi-critic ensemble with prediction std
 │       ├── evolution_module.py     # Elite preservation, selection, sparse mutation
 │       └── mc_dropout_module.py    # MC Dropout runner for epistemic variance
@@ -78,31 +79,7 @@ Supported `ALGO` values: `sc_erl`, `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq`.
 
 SC-ERL `surrogate.mode` options: `dropout`, `ensemble`, `evidential`, `random`.
 
-### RL backbone (`ddpg` / `td3` / `crossq`)
-
-`sc_erl` and `erl` pick their RL learner via `backbone`. The `crossq` backbone is a **native** CrossQ learner (BatchRenorm critic, no target networks — not the standalone SB3 `crossq` baseline). It works with all four surrogate modes.
-
-**MuJoCo:**
-
-```bash
-# ERL with CrossQ backbone
-task run ALGO=erl CLI_ARGS="backbone=crossq env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5"
-
-# SC-ERL with CrossQ backbone (choose surrogate.mode: random | dropout | ensemble | evidential)
-task run ALGO=sc_erl CLI_ARGS="backbone=crossq surrogate.mode=ensemble env.id=HalfCheetah-v5 eval_env.id=HalfCheetah-v5"
-```
-
-**DMC dog** (backend auto-detected from the `dm_control/` prefix; set explicitly to be safe):
-
-```bash
-# ERL with CrossQ backbone on DMC
-task run ALGO=erl CLI_ARGS="backbone=crossq env.id=dm_control/dog-stand-v0 eval_env.id=dm_control/dog-stand-v0 env.backend=fancy_gym eval_env.backend=fancy_gym"
-
-# SC-ERL with CrossQ backbone on DMC
-task run ALGO=sc_erl CLI_ARGS="backbone=crossq surrogate.mode=ensemble env.id=dm_control/dog-stand-v0 eval_env.id=dm_control/dog-stand-v0 env.backend=fancy_gym eval_env.backend=fancy_gym"
-```
-
-Tune BatchRenorm momentum with `rl.bn_momentum` (default `0.01`).
+`sc_erl` and `erl` always update their RL actor/critic via TD3 (twin critics, delayed policy updates, target-action smoothing) — this was the best-performing gradient update in experiments, so there is no backbone selection.
 
 ### Full experiment matrix (5 envs × 8 algo variants × 5 seeds, parallelized)
 
@@ -187,8 +164,7 @@ Key parameters in `configs/algorithm/sc_erl.yaml`:
 
 | Parameter | Description |
 |-----------|-------------|
-| `backbone` | RL learner: `ddpg` (default), `td3`, or `crossq` (native BatchRenorm CrossQ) |
-| `rl.bn_momentum` | BatchRenorm momentum for the `crossq` backbone (default: `0.01`) |
+| `rl.policy_noise` / `rl.noise_clip` / `rl.policy_delay` | TD3 target-smoothing noise, clip, and actor update delay |
 | `surrogate.mode` | Uncertainty method: `dropout`, `ensemble`, `evidential`, `random` |
 | `surrogate.beta` | LCB penalty weight (higher → more real rollouts) |
 | `surrogate.omega` | Percentile threshold for gating (default: 75) |
@@ -205,7 +181,21 @@ Global config (`configs/config.yaml`): `seed`, `device` (`auto`/`cuda`/`mps`/`cp
 
 ---
 
-## Additional Baselines: SAC and CrossQ
+## Additional Baselines: DDPG, TD3, PPO, SAC, CrossQ
+
+### DDPG, TD3, PPO (Stable-Baselines3 / PyTorch)
+
+Thin wrappers around Stable-Baselines3's `DDPG`, `TD3`, and `PPO`. All three share the same
+`EvalAndLogCallback` (`src/common/sb3_callback.py`) for periodic evaluation and WandB logging.
+
+```bash
+task run ALGO=ddpg CLI_ARGS="env.id=HalfCheetah-v5"
+task run ALGO=td3 CLI_ARGS="env.id=HalfCheetah-v5"
+task run ALGO=ppo CLI_ARGS="env.id=HalfCheetah-v5"
+```
+
+Key config knobs: `rl.learning_rate`, `rl.tau` (DDPG/TD3), `rl.exploration_noise_std` (DDPG/TD3),
+`rl.policy_noise`/`rl.noise_clip`/`rl.policy_delay` (TD3), `rl.gae_lambda`/`rl.clip_param`/`rl.ppo_epochs` (PPO).
 
 ### SAC (Stable-Baselines3 / PyTorch)
 

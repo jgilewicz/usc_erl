@@ -6,11 +6,11 @@ This file is the authoritative reference for AI-assisted development on this cod
 
 ## Project Summary
 
-**SC-ERL** is a hybrid evolutionary + deep RL framework. A population of GA actors evolves alongside a DDPG/TD3/CrossQ RL agent sharing a replay buffer. The key novelty is a **surrogate controller** that uses epistemic uncertainty to gate whether each candidate policy needs a real environment rollout or can be scored cheaply via the critic.
+**SC-ERL** is a hybrid evolutionary + deep RL framework. A population of GA actors evolves alongside a TD3 RL agent sharing a replay buffer. The key novelty is a **surrogate controller** that uses epistemic uncertainty to gate whether each candidate policy needs a real environment rollout or can be scored cheaply via the critic.
 
 Algorithms: `sc_erl` (4 surrogate modes), `erl`, `td3`, `ddpg`, `ppo`, `sac`, `crossq` (all SB3/PyTorch).
 
-Both `sc_erl` and `erl` select their RL learner via `backbone`: `ddpg` (default), `td3`, or `crossq` (native, not the SB3 `crossq` baseline). See "CrossQ backbone" below.
+Both `sc_erl` and `erl` are updated exclusively via TD3 gradient steps (twin critics, delayed policy updates, target-action smoothing) — experiments showed TD3 outperforms the DDPG and native-CrossQ backbones that used to be selectable, so those were removed; there is no `backbone` parameter anymore.
 Environments:
 - **MuJoCo v5**: `HalfCheetah-v5`, `Hopper-v5`, `Walker2d-v5`, `Ant-v5`, `Swimmer-v5`.
 - **DMC via fancy_gym**: `dm_control/dog-{stand,walk,trot,run,fetch}-v0`.
@@ -26,13 +26,15 @@ Environments:
 | `src/algorithms/ERL/erl.py` | Canonical ERL baseline |
 | `src/common/surrogate_controller.py` | Uncertainty gating, LCB scoring, EMA normalization |
 | `src/modules/evolution_module.py` | Elite preservation, tournament selection, sparse mutation |
-| `src/modules/deep_modules.py` | Actor, Critic, StochasticActor, EvidentialCritic (NIG), BatchNormCritic + BatchRenorm1d (CrossQ) |
-| `src/modules/ensemble_module.py` | Multi-critic ensemble (+ `crossq_compute_loss` for the CrossQ ensemble) |
-| `src/modules/mc_dropout_module.py` | MC Dropout runner (`_enable_only_dropout` keeps BatchNorm in eval) |
-| `src/common/utils.py` | Huber loss, soft-update (`polyak_update`), weight flattening, `crossq_train_critics` / `crossq_update_actor` |
+| `src/modules/deep_modules.py` | Actor, Critic, EvidentialCritic (NIG) |
+| `src/modules/ensemble_module.py` | Multi-critic ensemble with prediction std |
+| `src/modules/mc_dropout_module.py` | MC Dropout runner (`_enable_only_dropout` toggles only Dropout) |
+| `src/common/utils.py` | Huber loss, soft-update, weight flattening, `td3_train_critics` / `td3_update_actor` |
 | `src/common/reply_buffer.py` | Replay buffer (Transition namedtuple + circular buffer) |
-| `src/algorithms/SAC/sac.py` | SAC wrapper — SB3 model + WandB callback |
-| `src/algorithms/CrossQ/crossq.py` | CrossQ wrapper — sb3-contrib PyTorch model + WandB callback |
+| `src/algorithms/SAC/sac.py` | SAC wrapper — SB3 model + shared eval/WandB callback |
+| `src/algorithms/CrossQ/crossq.py` | CrossQ wrapper — sb3-contrib PyTorch model + shared eval/WandB callback |
+| `src/algorithms/DDPG/ddpg.py`, `TD3/td3.py`, `PPO/ppo.py` | Thin SB3 wrappers (`stable_baselines3.DDPG/TD3/PPO`) + shared eval/WandB callback |
+| `src/common/sb3_callback.py` | `EvalAndLogCallback` — periodic eval + WandB logging shared by all 5 SB3 baselines |
 | `configs/algorithm/sac.yaml` | SAC hyperparameters (`learning_rate`, `ent_coef`) |
 | `configs/algorithm/crossq.yaml` | CrossQ hyperparameters (`learning_rate`, `gradient_steps`) |
 | `configs/algorithm/sc_erl.yaml` | SC-ERL hyperparameters (surrogate, evolution, rl, network) |
@@ -53,7 +55,7 @@ for m in module.modules():
             excluded_params.add(p)
 ```
 
-Norm layers live only in **critics**, which are never mutated (evolution mutates actors, whose only norm is `LayerNorm`, already excluded). The CrossQ `BatchRenorm1d` is a custom module **not** covered by the `isinstance` check above — this is fine as long as it stays out of the actor. Never put BatchNorm/BatchRenorm in a population actor.
+Norm layers live only in **critics**, which are never mutated (evolution mutates actors, whose only norm is `LayerNorm`, already excluded).
 
 ### 2. Never hardcode device
 Always use `cfg.device` or the `device` parameter passed into modules. Auto-detection priority: `CUDA → MPS → CPU`. All `torch.Tensor` and `nn.Module` instances must be created on the correct device.
@@ -107,23 +109,14 @@ Q-values are normalized via EMA running bounds before LCB (EMA factor α=0.05), 
 
 ---
 
-## CrossQ backbone (`backbone=crossq`)
+## ERL / SC-ERL RL Update (TD3-only)
 
-A native CrossQ RL learner for `sc_erl` and `erl` — **not** the SB3-contrib `crossq` baseline (that stays a separate standalone algorithm). CrossQ ≈ "TD3/SAC minus target networks plus BatchNorm in the critic", deterministic (no entropy term, no `alpha`). The population actor stays the deterministic `Actor`; only the critic side changes.
+Both `erl` and `sc_erl` train their RL actor/critic exclusively via TD3 (`td3_train_critics` / `td3_update_actor` in `src/common/utils.py`): twin `Critic` networks with target networks, delayed policy updates (`rl.policy_delay`), and target-action smoothing noise (`rl.policy_noise`, `rl.noise_clip`). There is no `backbone` config option — DDPG-style single-critic updates and the native BatchRenorm CrossQ critic path were both removed after experiments showed TD3 was consistently the better gradient update for both algorithms.
 
-Mechanics (`crossq_train_critics` in `src/common/utils.py`):
-- **Joint forward pass** — current `(s,a)` and next `(s',a')` are concatenated along the batch dim and pushed through the critic in ONE forward, so BatchNorm normalises both with shared statistics. Split back with `[:b]` (current) / `[b:]` (next).
-- **No target networks, no soft-update.** Only the next-Q slice is detached (stop-gradient); the current-Q slice keeps its gradient.
-- **`crossq_update_actor`** switches the critic to `eval` for the policy-gradient pass so it does not pollute BatchNorm running stats.
-
-Normalization is **`BatchRenorm1d`** (Ioffe 2017, as in CrossQ), not plain BatchNorm — `r`/`d` corrections ramped from the BatchNorm identity over `warmup_steps` (counts critic training forward passes, not env steps). `bn_momentum` (config `rl.bn_momentum`, default `0.01`) sets its momentum. At `eval` it uses running stats → surrogate scoring is deterministic and safe for any batch size (incl. batch=1).
-
-Critic type is chosen by `surrogate.mode` so the `SurrogateController` contract holds:
-- `random` / `dropout` → twin scalar `BatchNormCritic` (min-double-Q). Dropout mode adds `nn.Dropout`; `MCDropout._enable_only_dropout` keeps BatchRenorm in eval while toggling only Dropout, so MC variance comes solely from dropout.
-- `ensemble` → `EnsembleModule` of `BatchNormCritic`, trained via `EnsembleModule.crossq_compute_loss` (no twin, no target).
-- `evidential` → `EvidentialCritic(use_bn=True)` with NIG loss (no twin, no target).
-
-**Gotcha:** the joint forward requires BatchRenorm in `train` mode; the surrogate leaves the critic in `eval` after scoring, so `crossq_train_critics` re-asserts `train()` at entry. Never run a BatchRenorm critic in `train` on a batch of size 1.
+Critic type is still chosen by `surrogate.mode` for SC-ERL (unaffected by the TD3-only change):
+- `random` / `dropout` → twin scalar `Critic` (min-double-Q).
+- `ensemble` → `EnsembleModule` of `Critic`.
+- `evidential` → `EvidentialCritic` with NIG loss.
 
 ---
 
@@ -164,3 +157,4 @@ All runs use `uv run python entry_point.py`. Do not invoke `entry_point.py` dire
 - **SLURM**: single `slurm_run_array.sh` handles both backends. Backend and algo matrix auto-detected from `TARGET_ENV` prefix (`dm_control/` → fancy_gym + 4 SC-ERL modes, 20 tasks; otherwise → MuJoCo + 10 algos, 50 tasks). Pass `--array=0-19` for DMC, `--array=0-49` for MuJoCo.
 - **SAC** wraps SB3 `SAC` (PyTorch). Shares `cfg.device` normally. No extra setup.
 - **CrossQ** wraps `sb3_contrib.CrossQ` (PyTorch). Accepts `device` directly; no JAX setup needed.
+- **DDPG / TD3 / PPO** are thin SB3 wrappers (`stable_baselines3.DDPG/TD3/PPO`), same pattern as SAC/CrossQ. All custom PyTorch training loops for these three were removed — DDPG/TD3 use `NormalActionNoise` for exploration; PPO uses SB3's built-in rollout buffer and GAE. All five SB3 baselines (DDPG, TD3, PPO, SAC, CrossQ) share one `EvalAndLogCallback` (`src/common/sb3_callback.py`) instead of each defining its own.

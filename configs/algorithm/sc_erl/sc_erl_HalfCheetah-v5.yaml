@@ -11,7 +11,6 @@ surrogate:
   mad_k: 3.316
   dropout_p: 0.331
   mc_samples: 43
-  lam: 0.1
   k_ensembles: 8
 rl:
   policy_noise: 0.126

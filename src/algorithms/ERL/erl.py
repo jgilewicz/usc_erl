@@ -3,18 +3,14 @@ import numpy as np
 import gymnasium as gym
 from collections import deque
 
-from modules.deep_modules import Actor, BatchNormCritic, Critic
+from modules.deep_modules import Actor, Critic
 from common.reply_buffer import Buffer
 from modules.evolution_module import EvolutionModule
 from common.wandb_logger import WandbLogger
 from common.utils import (
-    crossq_train_critics,
-    crossq_update_actor,
     td3_train_critics,
     td3_update_actor,
     soft_update,
-    train_critic_step,
-    train_actor_step,
     warmup,
     evaluate_policy,
     rollout_policy,
@@ -52,11 +48,9 @@ def ERL(
     debug: bool = False,
     grad_clip_norm: float = 1.0,
     mutation_fraction: float = 0.1,
-    backbone: str = "ddpg",  # "ddpg", "td3", or "crossq"
-    policy_delay: int = 2,  # TD3 / CrossQ
-    policy_noise: float = 0.2,  # TD3 only
-    noise_clip: float = 0.5,  # TD3 only
-    bn_momentum: float = 0.01,  # CrossQ only — BatchNorm momentum
+    policy_delay: int = 2,
+    policy_noise: float = 0.2,
+    noise_clip: float = 0.5,
 ) -> float:
 
     state_dim = env.observation_space.shape[0]
@@ -92,61 +86,37 @@ def ERL(
 
     target_actor.load_state_dict(actor.state_dict())
 
-    critic_2 = None
-    critic_2_target = None
-    critic_2_optimizer = None
-    if backbone == "crossq":
-        critic = BatchNormCritic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            activation="elu",
-            bn_momentum=bn_momentum,
-        ).to(device)
-        critic_2 = BatchNormCritic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            activation="elu",
-            bn_momentum=bn_momentum,
-        ).to(device)
-        # CrossQ has no target networks.
-        target_critic = None
-        critic_2_optimizer = torch.optim.Adam(
-            critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
-        )
-    else:
-        critic = Critic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            dropout=0.0,
-            activation="elu",
-        ).to(device)
+    critic = Critic(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        dropout=0.0,
+        activation="elu",
+    ).to(device)
 
-        target_critic = Critic(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            dropout=0.0,
-            activation="elu",
-        ).to(device)
+    target_critic = Critic(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        dropout=0.0,
+        activation="elu",
+    ).to(device)
 
-        target_critic.load_state_dict(critic.state_dict())
+    target_critic.load_state_dict(critic.state_dict())
 
-        if backbone == "td3":
-            critic_2 = Critic(
-                state_dim=state_dim,
-                action_dim=action_dim,
-                dropout=0.0,
-                activation="elu",
-            ).to(device)
-            critic_2_target = Critic(
-                state_dim=state_dim,
-                action_dim=action_dim,
-                dropout=0.0,
-                activation="elu",
-            ).to(device)
-            critic_2_target.load_state_dict(critic_2.state_dict())
-            critic_2_optimizer = torch.optim.Adam(
-                critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
-            )
+    critic_2 = Critic(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        dropout=0.0,
+        activation="elu",
+    ).to(device)
+
+    critic_2_target = Critic(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        dropout=0.0,
+        activation="elu",
+    ).to(device)
+
+    critic_2_target.load_state_dict(critic_2.state_dict())
 
     replay_buffer = Buffer(
         capacity=buffer_size,
@@ -160,6 +130,9 @@ def ERL(
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=actor_lr)
     critic_optimizer = torch.optim.Adam(
         critic.parameters(), lr=critic_lr, weight_decay=1e-4
+    )
+    critic_2_optimizer = torch.optim.Adam(
+        critic_2.parameters(), lr=critic_lr, weight_decay=1e-4
     )
 
     evolution_module = EvolutionModule(
@@ -242,86 +215,36 @@ def ERL(
                 else gradient_steps
             )
             for update_idx in range(num_updates):
-                if backbone == "crossq":
-                    critic_loss = crossq_train_critics(
-                        actor=actor,
-                        critic_1=critic,
-                        critic_2=critic_2,
-                        critic_1_optimizer=critic_optimizer,
-                        critic_2_optimizer=critic_2_optimizer,
-                        replay_buffer=replay_buffer,
-                        batch_size=batch_size,
-                        gamma=gamma,
-                        device=device,
-                        grad_clip_norm=grad_clip_norm,
-                    )
-                    if update_idx % policy_delay == 0:
-                        actor_loss = crossq_update_actor(
-                            actor=actor,
-                            critic_1=critic,
-                            actor_optimizer=actor_optimizer,
-                            replay_buffer=replay_buffer,
-                            batch_size=batch_size,
-                            device=device,
-                            grad_clip_norm=grad_clip_norm,
-                        )
-                    continue
-
-                elif backbone == "td3":
-                    critic_loss = td3_train_critics(
-                        actor_target=target_actor,
-                        critic_1=critic,
-                        critic_2=critic_2,
-                        critic_1_target=target_critic,
-                        critic_2_target=critic_2_target,
-                        critic_1_optimizer=critic_optimizer,
-                        critic_2_optimizer=critic_2_optimizer,
-                        replay_buffer=replay_buffer,
-                        batch_size=batch_size,
-                        gamma=gamma,
-                        policy_noise=policy_noise,
-                        noise_clip=noise_clip,
-                        action_limit=action_limit,
-                        device=device,
-                        grad_clip_norm=grad_clip_norm,
-                    )
-                    if update_idx % policy_delay == 0:
-                        actor_loss = td3_update_actor(
-                            actor=actor,
-                            critic_1=critic,
-                            actor_optimizer=actor_optimizer,
-                            replay_buffer=replay_buffer,
-                            batch_size=batch_size,
-                            device=device,
-                            grad_clip_norm=grad_clip_norm,
-                        )
-                        soft_update(target_critic, critic, tau=tau)
-                        soft_update(critic_2_target, critic_2, tau=tau)
-                        soft_update(target_actor, actor, tau=tau)
-                    continue
-
-                critic_loss = train_critic_step(
-                    target_actor=target_actor,
-                    critic=critic,
-                    target_critic=target_critic,
-                    critic_optimizer=critic_optimizer,
+                critic_loss = td3_train_critics(
+                    actor_target=target_actor,
+                    critic_1=critic,
+                    critic_2=critic_2,
+                    critic_1_target=target_critic,
+                    critic_2_target=critic_2_target,
+                    critic_1_optimizer=critic_optimizer,
+                    critic_2_optimizer=critic_2_optimizer,
                     replay_buffer=replay_buffer,
                     batch_size=batch_size,
                     gamma=gamma,
-                    tau=tau,
+                    policy_noise=policy_noise,
+                    noise_clip=noise_clip,
+                    action_limit=action_limit,
+                    device=device,
                     grad_clip_norm=grad_clip_norm,
                 )
-
-                actor_loss = train_actor_step(
-                    actor=actor,
-                    target_actor=target_actor,
-                    critic=critic,
-                    actor_optimizer=actor_optimizer,
-                    replay_buffer=replay_buffer,
-                    batch_size=batch_size,
-                    tau=tau,
-                    grad_clip_norm=grad_clip_norm,
-                )
+                if update_idx % policy_delay == 0:
+                    actor_loss = td3_update_actor(
+                        actor=actor,
+                        critic_1=critic,
+                        actor_optimizer=actor_optimizer,
+                        replay_buffer=replay_buffer,
+                        batch_size=batch_size,
+                        device=device,
+                        grad_clip_norm=grad_clip_norm,
+                    )
+                    soft_update(target_critic, critic, tau=tau)
+                    soft_update(critic_2_target, critic_2, tau=tau)
+                    soft_update(target_actor, actor, tau=tau)
 
         if generation % rl_injection_interval == 0:
             evolution_module.sync_rl_to_pop(

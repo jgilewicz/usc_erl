@@ -67,35 +67,3 @@ class EnsembleModule(nn.Module):
             total_loss += masked_loss
 
         return total_loss
-
-    def crossq_compute_loss(
-        self,
-        cat_states: torch.Tensor,
-        cat_actions: torch.Tensor,
-        reward: torch.Tensor,
-        done: torch.Tensor,
-        gamma: float,
-        b: int,
-        mask_prob: float = 0.5,
-    ) -> torch.Tensor:
-        reward = reward.view(-1, 1)
-        done = done.view(-1, 1)
-
-        current_qs: list[torch.Tensor] = []
-        next_qs: list[torch.Tensor] = []
-        for critic in self.critics:
-            q_all = critic(cat_states, cat_actions).view(-1, 1)
-            current_qs.append(q_all[:b])
-            next_qs.append(q_all[b:])
-
-        next_q = torch.stack(next_qs, dim=0).mean(dim=0).detach()
-        target_q = reward + (1.0 - done) * gamma * next_q
-
-        total_loss = torch.tensor(0.0, device=cat_states.device)
-        for current_q in current_qs:
-            mask = torch.bernoulli(torch.full_like(current_q, mask_prob))
-            noisy_target_q = target_q * (1.0 + torch.randn_like(target_q) * 0.02)
-            loss = F.smooth_l1_loss(current_q, noisy_target_q, reduction="none")
-            total_loss += (loss * mask).sum() / (mask.sum() + 1e-8)
-
-        return total_loss
