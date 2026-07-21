@@ -1,6 +1,6 @@
-# SC-ERL: Uncertainty-Gated Surrogate-Assisted Evolutionary Reinforcement Learning
+# USC-ERL: Uncertainty-Gated Surrogate-Assisted Evolutionary Reinforcement Learning
 
-Master's research repository implementing a modular hybrid framework combining deep reinforcement learning (RL), evolutionary algorithms (EA), and uncertainty-guided surrogate optimization on continuous control tasks (MuJoCo).
+ECML PKDD 2026 LFSM Wokshop research repository implementing a modular hybrid framework combining deep reinforcement learning (RL), evolutionary algorithms (EA), and uncertainty-guided surrogate optimization on continuous control tasks.
 
 ## Overview
 
@@ -81,24 +81,10 @@ SC-ERL `surrogate.mode` options: `dropout`, `ensemble`, `evidential`, `random`.
 
 `sc_erl` and `erl` always update their RL actor/critic via TD3 (twin critics, delayed policy updates, target-action smoothing) — this was the best-performing gradient update in experiments, so there is no backbone selection.
 
-### Full experiment matrix (5 envs × 8 algo variants × 5 seeds, parallelized)
-
-```bash
-task run-parallel
-```
-
-Control parallelism with `PARALLEL=N` (default: 4).
-
 ### Single DMC dog run
 
 ```bash
 task run-dmc ENV=dm_control/dog-stand-v0 MODE=ensemble SEED=0
-```
-
-### Full DMC matrix (5 dog tasks × 4 surrogate modes × 5 seeds, parallelized)
-
-```bash
-task run-parallel-dmc
 ```
 
 ### SLURM (cluster)
