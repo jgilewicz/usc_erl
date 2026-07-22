@@ -19,6 +19,9 @@
 #
 # Optional overrides:
 #   N_STEPS   Training steps per run (default: 1000000)
+#   BACKBONE  RL backbone for sc_erl / erl (default: crossq; also: ddpg, td3)
+#             Ignored by the other baselines (td3/ddpg/ppo/sac/crossq) — they
+#             have no `backbone` parameter.
 
 #SBATCH -N 1                            # 1 node
 #SBATCH -c 4                            # 4 CPU cores
@@ -33,6 +36,7 @@
 
 ENV="${TARGET_ENV:-HalfCheetah-v5}"
 N_STEPS="${N_STEPS:-1000000}"
+BACKBONE="${BACKBONE:-crossq}"   # RL backbone for sc_erl / erl (default: crossq)
 
 # ---- Backend auto-detected from env ID prefix ----
 if [[ "$ENV" == dm_control/* || "$ENV" == fancy/* || "$ENV" == metaworld/* ]]; then
@@ -68,18 +72,28 @@ ALGO="${ALGO_MODE%%:*}"
 SURROGATE_MODE="${ALGO_MODE##*:}"
 SEED="${SEEDS[$SEED_IDX]}"
 
+# Backbone applies ONLY to sc_erl / erl — the other baselines have no such param.
+# Kept out of RUN_NAME (so download_results.py env/method parsing is unaffected);
+# surfaced as a WandB tag for traceability.
+BACKBONE_ARGS=()
+BACKBONE_TAG=""
+if [[ "$ALGO" == "sc_erl" || "$ALGO" == "erl" ]]; then
+  BACKBONE_ARGS=("backbone=${BACKBONE}")
+  BACKBONE_TAG=",${BACKBONE}"
+fi
+
 # Sanitize env id (dm_control/dog-stand-v0 → dm_control_dog-stand-v0)
 ENV_SLUG=$(echo "${ENV}" | tr '/' '_' | tr ':' '_')
 
 if [[ -n "$SURROGATE_MODE" ]]; then
   RUN_NAME="${ALGO}_${SURROGATE_MODE}_${ENV_SLUG}_seed${SEED}"
-  WANDB_TAGS="[${ENV_TAG},${ALGO},${SURROGATE_MODE}]"
+  WANDB_TAGS="[${ENV_TAG},${ALGO},${SURROGATE_MODE}${BACKBONE_TAG}]"
 else
   RUN_NAME="${ALGO}_${ENV_SLUG}_seed${SEED}"
-  WANDB_TAGS="[${ENV_TAG},${ALGO},baseline]"
+  WANDB_TAGS="[${ENV_TAG},${ALGO},baseline${BACKBONE_TAG}]"
 fi
 
-echo "Task ${TASK_ID} | ${ALGO} ${SURROGATE_MODE:-N/A} | ${ENV} | seed ${SEED} | backend ${BACKEND}"
+echo "Task ${TASK_ID} | ${ALGO} ${SURROGATE_MODE:-N/A} | backbone ${BACKBONE_ARGS[*]:-N/A} | ${ENV} | seed ${SEED} | backend ${BACKEND}"
 
 source /usr/local/sbin/modules.sh
 module load Python/3.12.3-GCCcore-13.3.0
@@ -114,6 +128,7 @@ BACKEND_ARGS=()
 python entry_point.py \
   algorithm="${ALGO}" \
   "${SURROGATE_ARGS[@]}" \
+  "${BACKBONE_ARGS[@]}" \
   "${BACKEND_ARGS[@]}" \
   seed="${SEED}" \
   env.id="${ENV}" \

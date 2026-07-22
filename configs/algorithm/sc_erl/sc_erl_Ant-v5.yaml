@@ -11,6 +11,7 @@ surrogate:
   k: 1024
   dropout_p: 0.252
   mc_samples: 48
+  lam: 0.035
   k_ensembles: 8
 rl:
   policy_noise: 0.206

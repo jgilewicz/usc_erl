@@ -99,6 +99,7 @@ def main(cfg: DictConfig) -> None:
             config=OmegaConf.to_container(cfg, resolve=True),
         )
 
+
     result = None
 
     if cfg.name == "erl":
@@ -132,20 +133,26 @@ def main(cfg: DictConfig) -> None:
             debug=cfg.debug,
             grad_clip_norm=cfg.grad_clip_norm,
             mutation_fraction=cfg.evolution.mutation_fraction,
-            policy_delay=cfg.rl.policy_delay,
-            policy_noise=cfg.rl.policy_noise,
-            noise_clip=cfg.rl.noise_clip,
+            backbone=cfg.get("backbone", "ddpg"),
+            policy_delay=cfg.rl.get("policy_delay", 2),
+            policy_noise=cfg.rl.get("policy_noise", 0.2),
+            noise_clip=cfg.rl.get("noise_clip", 0.5),
+            bn_momentum=cfg.rl.get("bn_momentum", 0.01),
         )
     elif cfg.name == "td3":
         result = TD3(
+            buffer_size=cfg.buffer_size,
+            rng=np.random.default_rng(seed=cfg.seed),
             env=make_env(cfg.env.id, cfg.env.get("backend", "auto")),
             eval_env=make_env(cfg.eval_env.id, cfg.eval_env.get("backend", "auto")),
             n_steps=cfg.n_steps,
             batch_size=cfg.batch_size,
             device=device,
+            actor_hidden_dim=cfg.network.actor_hidden_dim,
             gamma=cfg.rl.gamma,
             tau=cfg.rl.tau,
-            learning_rate=cfg.rl.learning_rate,
+            actor_lr=cfg.rl.actor_lr,
+            critic_lr=cfg.rl.critic_lr,
             policy_noise=cfg.rl.policy_noise,
             noise_clip=cfg.rl.noise_clip,
             policy_delay=cfg.rl.policy_delay,
@@ -155,23 +162,29 @@ def main(cfg: DictConfig) -> None:
             eval_interval=cfg.evaluation.eval_interval,
             logger=logger,
             debug=cfg.debug,
+            grad_clip_norm=cfg.grad_clip_norm,
         )
     elif cfg.name == "ddpg":
         result = DDPG(
+            buffer_size=cfg.buffer_size,
+            rng=np.random.default_rng(seed=cfg.seed),
             env=make_env(cfg.env.id, cfg.env.get("backend", "auto")),
             eval_env=make_env(cfg.eval_env.id, cfg.eval_env.get("backend", "auto")),
             n_steps=cfg.n_steps,
             batch_size=cfg.batch_size,
             device=device,
+            actor_hidden_dim=cfg.network.actor_hidden_dim,
             gamma=cfg.rl.gamma,
             tau=cfg.rl.tau,
-            learning_rate=cfg.rl.learning_rate,
+            actor_lr=cfg.rl.actor_lr,
+            critic_lr=cfg.rl.critic_lr,
             exploration_noise_std=cfg.rl.exploration_noise_std,
             warmup_steps=cfg.warmup.warmup_steps,
             evaluate_episodes=cfg.evaluation.evaluate_episodes,
             eval_interval=cfg.evaluation.eval_interval,
             logger=logger,
             debug=cfg.debug,
+            grad_clip_norm=cfg.grad_clip_norm,
         )
     elif cfg.name == "sc_erl":
         result = SC_ERL(
@@ -210,9 +223,11 @@ def main(cfg: DictConfig) -> None:
             dropout_p=cfg.surrogate.dropout_p,
             mc_samples=cfg.surrogate.mc_samples,
             mutation_fraction=cfg.evolution.mutation_fraction,
+            backbone=cfg.backbone,
             policy_delay=cfg.rl.policy_delay,
             policy_noise=cfg.rl.policy_noise,
             noise_clip=cfg.rl.noise_clip,
+            bn_momentum=cfg.rl.get("bn_momentum", 0.01),
             mad_k=cfg.surrogate.mad_k,
             beta_lr=cfg.surrogate.beta_lr,
         )
@@ -260,15 +275,19 @@ def main(cfg: DictConfig) -> None:
             batch_size=cfg.batch_size,
             ppo_epochs=cfg.rl.ppo_epochs,
             device=device,
+            actor_hidden_dim=cfg.network.actor_hidden_dim,
+            critic_hidden_dim=cfg.network.critic_hidden_dim,
             gamma=cfg.rl.gamma,
             gae_lambda=cfg.rl.gae_lambda,
             clip_param=cfg.rl.clip_param,
             entropy_coef=cfg.rl.entropy_coef,
-            learning_rate=cfg.rl.learning_rate,
+            actor_lr=cfg.rl.actor_lr,
+            critic_lr=cfg.rl.critic_lr,
             evaluate_episodes=cfg.evaluation.evaluate_episodes,
             eval_interval=cfg.evaluation.eval_interval,
             logger=logger,
             debug=cfg.debug,
+            grad_clip_norm=cfg.grad_clip_norm,
         )
     else:
         raise ValueError(f"Unknown algorithm: {cfg.name}")
@@ -276,7 +295,6 @@ def main(cfg: DictConfig) -> None:
     if cfg.get("result_file") and result is not None:
         import json
         import pathlib
-
         pathlib.Path(cfg.result_file).parent.mkdir(parents=True, exist_ok=True)
         pathlib.Path(cfg.result_file).write_text(json.dumps({"eval_reward": result}))
 
