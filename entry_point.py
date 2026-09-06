@@ -9,15 +9,15 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from common.surrogate_controller import SurrogateMode
-from common.wandb_logger import WandbLogger
 from algorithms.CrossQ import CrossQ
+from algorithms.DDPG import DDPG
 from algorithms.ERL import ERL
 from algorithms.PPO import PPO
 from algorithms.SAC import SAC
 from algorithms.SC_ERL import SC_ERL
 from algorithms.TD3 import TD3
-from algorithms.DDPG import DDPG
+from common.surrogate_controller import SurrogateMode
+from common.wandb_logger import WandbLogger
 
 
 def resolve_algorithm_name(name: str) -> str:
@@ -49,14 +49,20 @@ def load_environment_specific_algorithm_cfg(cfg: DictConfig) -> DictConfig:
 
 
 _FANCY_GYM_PREFIXES = ("dm_control/", "fancy/", "metaworld/", "dmc/")
+_MYOSUITE_PREFIX = "myo"
 
 
 def make_env(env_id: str, backend: str = "auto") -> gym.Env:
     needs_fancy = backend == "fancy_gym" or (
         backend == "auto" and any(env_id.startswith(p) for p in _FANCY_GYM_PREFIXES)
     )
+    needs_myosuite = backend == "myosuite" or (
+        backend == "auto" and env_id.startswith(_MYOSUITE_PREFIX)
+    )
     if needs_fancy:
         import shimmy  # noqa: F401 — registers DMC envs with gymnasium
+    if needs_myosuite:
+        import myosuite  # noqa: F401 — registers MyoSuite envs with gymnasium
     env = gym.make(env_id)
     if isinstance(env.observation_space, gym.spaces.Dict):
         env = gym.wrappers.FlattenObservation(env)
@@ -215,6 +221,17 @@ def main(cfg: DictConfig) -> None:
             noise_clip=cfg.rl.noise_clip,
             mad_k=cfg.surrogate.mad_k,
             beta_lr=cfg.surrogate.beta_lr,
+            gate_mode=cfg.surrogate.gate_mode,
+            rho=cfg.surrogate.rho,
+            rho_min=cfg.surrogate.rho_min,
+            rho_max=cfg.surrogate.rho_max,
+            rho_eta=cfg.surrogate.rho_eta,
+            e_star=cfg.surrogate.e_star,
+            e_hat_window=cfg.surrogate.e_hat_window,
+            fitness_norm=cfg.surrogate.fitness_norm,
+            lam=cfg.surrogate.lam,
+            env_id=cfg.env.id,
+            seed=cfg.seed,
         )
     elif cfg.name == "crossq":
         result = CrossQ(

@@ -1,10 +1,18 @@
-from torch import nn
-import torch
-import torch.nn.functional as F
-from common.reply_buffer import Buffer, Transition
+from typing import TYPE_CHECKING
+
 import gymnasium as gym
 import numpy as np
-from modules.deep_modules import Actor, Critic
+import torch
+import torch.nn.functional as F
+from scipy.stats import rankdata
+from torch import nn
+
+from common.reply_buffer import Buffer, Transition
+from modules.deep_modules import Actor, Critic, EvidentialCritic
+from modules.ensemble_module import EnsembleModule
+
+if TYPE_CHECKING:
+    from common.surrogate_controller import SurrogateController
 
 
 def _unwrap_q(output) -> torch.Tensor:
@@ -240,9 +248,9 @@ def evaluate_policy(
 
 def td3_train_critics(
     actor_target: Actor,
-    critic_1: Critic,
+    critic_1: Critic | EnsembleModule,
     critic_2: Critic,
-    critic_1_target: Critic,
+    critic_1_target: Critic | EnsembleModule,
     critic_2_target: Critic,
     critic_1_optimizer: torch.optim.Optimizer,
     critic_2_optimizer: torch.optim.Optimizer,
@@ -268,15 +276,33 @@ def td3_train_critics(
             -action_limit, action_limit
         )
 
-        target_q1 = _unwrap_q(critic_1_target(next_state, next_action))
         target_q2 = _unwrap_q(critic_2_target(next_state, next_action))
-        target_q = torch.min(target_q1, target_q2)
 
-        target = reward + (1.0 - done) * gamma * target_q
+        target_per_member = None
+        if isinstance(critic_1_target, EnsembleModule):
+            target_q1_per_member = critic_1_target.forward_per_member(
+                next_state, next_action
+            )
+            target_q1_mean = target_q1_per_member.mean(dim=0)
+            target_per_member = reward.unsqueeze(0) + (
+                1.0 - done.unsqueeze(0)
+            ) * gamma * torch.min(target_q1_per_member, target_q2.unsqueeze(0))
+        else:
+            target_q1_mean = _unwrap_q(critic_1_target(next_state, next_action))
 
-    current_q1 = _unwrap_q(critic_1(state, action))
-    current_q2 = _unwrap_q(critic_2(state, action))
-    critic_loss = F.mse_loss(current_q1, target) + F.mse_loss(current_q2, target)
+        target = reward + (1.0 - done) * gamma * torch.min(target_q1_mean, target_q2)
+
+    if isinstance(critic_1, EnsembleModule):
+        assert target_per_member is not None, (
+            "critic_1 is an EnsembleModule but critic_1_target is not; "
+            "both must be EnsembleModule together"
+        )
+        loss_1 = critic_1.compute_loss(state, action, target_per_member)
+    else:
+        loss_1 = F.smooth_l1_loss(_unwrap_q(critic_1(state, action)), target)
+
+    loss_2 = F.smooth_l1_loss(_unwrap_q(critic_2(state, action)), target)
+    critic_loss = loss_1 + loss_2
 
     critic_1_optimizer.zero_grad()
     critic_2_optimizer.zero_grad()
@@ -291,7 +317,7 @@ def td3_train_critics(
 
 def td3_update_actor(
     actor: Actor,
-    critic_1: Critic,
+    critic_1: Critic | EnsembleModule,
     actor_optimizer: torch.optim.Optimizer,
     replay_buffer: Buffer,
     batch_size: int,
@@ -312,8 +338,8 @@ def td3_update_actor(
 
 
 def surrogate_fitness(
-    population: list[nn.Module],
-    critic: nn.Module,
+    population: list[Actor],
+    critic: Critic | EnsembleModule | EvidentialCritic,
     replay_buffer: Buffer,
     device: torch.device,
     k: int = 5,
@@ -346,3 +372,54 @@ def surrogate_fitness(
         critic.train(critic_was_training)
 
     return fitnesses
+
+
+def auc_score(scores: np.ndarray, labels: np.ndarray) -> float:
+    r = rankdata(scores)
+    n_pos = labels.sum()
+    n_neg = len(labels) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    return float((r[labels == 1].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def build_surrogate_metrics(
+    surrogate_controller: "SurrogateController", include_uncertainty: bool
+) -> dict[str, float]:
+    if not include_uncertainty:
+        return {}
+    metrics: dict[str, float] = {
+        "uncertainty_mean": surrogate_controller.last_uncertainty_mean,
+        "uncertainty_max": surrogate_controller.last_uncertainty_max,
+        "uncertainty_threshold": surrogate_controller.last_uncertainty_threshold,
+        "raw_sigma_mean": surrogate_controller.last_raw_sigma_mean,
+        "raw_sigma_max": surrogate_controller.last_raw_sigma_max,
+        "raw_sigma_cv": surrogate_controller.raw_sigma_cv,
+        "rho": surrogate_controller.rho,
+        "e_hat_mean": surrogate_controller.e_hat_mean,
+        "running_real_scale": surrogate_controller.running_real_scale,
+    }
+    if surrogate_controller.last_gate_quality is not None:
+        metrics.update(
+            {
+                f"gate_{name}": value
+                for name, value in surrogate_controller.last_gate_quality.items()
+            }
+        )
+    return metrics
+
+
+def behavioural_distance(
+    policy_j: nn.Module,
+    policy_rl: nn.Module,
+    obs: torch.Tensor,
+    a_max: float,
+) -> float:
+    with torch.no_grad():
+        a_j = policy_j(obs)
+        a_rl = policy_rl(obs)
+
+        diff = (a_j - a_rl) / a_max
+
+        per_state = diff.pow(2).mean(dim=1).sqrt()
+        return float(per_state.mean())

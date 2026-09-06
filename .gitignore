@@ -1,6 +1,7 @@
 # Environments
 .env
 .venv/
+.venv-myosuite/
 venv/
 ENV/
 env.bak/
@@ -9,6 +10,9 @@ venv.bak/
 # Hydra outputs
 outputs/
 .hydra/
+
+# Ensemble decisive-test checkpoints
+checkpoints/
 
 # Weights & Biases
 wandb/

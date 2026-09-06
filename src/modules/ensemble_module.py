@@ -2,8 +2,8 @@ import copy
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from modules.deep_modules import Critic
 
@@ -47,23 +47,26 @@ class EnsembleModule(nn.Module):
 
         return mean_q, std_q
 
-    def compute_loss(
-        self, states: torch.Tensor, actions: torch.Tensor, target_q: torch.Tensor
+    def forward_per_member(
+        self, states: torch.Tensor, actions: torch.Tensor
     ) -> torch.Tensor:
-        total_loss = torch.tensor(0.0, device=states.device)
+        return torch.stack([critic(states, actions) for critic in self.critics], dim=0)
+
+    def compute_loss(
+        self, states: torch.Tensor, actions: torch.Tensor, target_qs: torch.Tensor
+    ) -> torch.Tensor:
         mask_prob = 0.5
+        losses = []
 
-        target_q = target_q.view(-1, 1)
-
-        for critic in self.critics:
+        for i, critic in enumerate(self.critics):
             current_q = critic(states, actions).view(-1, 1)
+            target_q = target_qs[i].view(-1, 1)
 
             mask = torch.bernoulli(torch.full_like(current_q, mask_prob))
 
             noisy_target_q = target_q * (1.0 + torch.randn_like(target_q) * 0.02)
             loss = F.smooth_l1_loss(current_q, noisy_target_q, reduction="none")
 
-            masked_loss = (loss * mask).sum() / (mask.sum() + 1e-8)
-            total_loss += masked_loss
+            losses.append((loss * mask).sum() / (mask.sum() + 1e-8))
 
-        return total_loss
+        return torch.stack(losses).mean()
