@@ -397,6 +397,7 @@ def build_surrogate_metrics(
         "raw_sigma_cv": surrogate_controller.raw_sigma_cv,
         "rho": surrogate_controller.rho,
         "e_hat_mean": surrogate_controller.e_hat_mean,
+        "raw_mu_mean": surrogate_controller.last_mu_mean,
     }
     if surrogate_controller.last_gate_quality is not None:
         metrics.update(

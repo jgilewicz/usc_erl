@@ -127,6 +127,7 @@ class SurrogateController:
         self.last_uncertainty_mean = 0.0
         self.last_uncertainty_max = 0.0
         self.last_uncertainty_threshold = 0.0
+        self.last_mu_mean = 0.0
         self.mode = "real"
         self.surrogate_mode = surrogate_mode
 
@@ -355,6 +356,7 @@ class SurrogateController:
         self.last_obs_batch = obs.detach().cpu().numpy()
         self.last_per_state_mu = np.stack(mu_per_state, axis=0)
         self.last_per_state_sigma = np.stack(sigma_per_state, axis=0)
+        self.last_mu_mean = float(self.last_per_state_mu.mean())
 
         if self.debug:
             assert np.allclose(
