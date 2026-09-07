@@ -4,7 +4,6 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from scipy.stats import pearsonr
 
 from common.reply_buffer import Buffer
 from common.surrogate_controller import SurrogateController, SurrogateMode
@@ -78,7 +77,6 @@ def SC_ERL(
     e_star: float = 0.25,
     e_hat_window: int = 10,
     fitness_norm: str = "tanh",
-    lam: float = 1.0,
     env_id: str = "",
     seed: int = 0,
 ) -> float:
@@ -225,7 +223,6 @@ def SC_ERL(
         e_star=e_star,
         e_hat_window=e_hat_window,
         fitness_norm=fitness_norm,
-        lam=lam,
     )
 
     total_steps = warmup(env, replay_buffer, warmup_steps=warmup_steps)
@@ -350,9 +347,9 @@ def SC_ERL(
             checkpoint_dir = Path("checkpoints")
             checkpoint_dir.mkdir(exist_ok=True)
             step_label = checkpoint_steps[next_checkpoint_idx]
-            obs_batch = replay_buffer.sample(
-                batch_size=min(5000, len(replay_buffer))
-            )["state"]
+            obs_batch = replay_buffer.sample(batch_size=min(5000, len(replay_buffer)))[
+                "state"
+            ]
             torch.save(
                 {
                     "actor": actor.state_dict(),
@@ -393,19 +390,11 @@ def SC_ERL(
         behavioral_distance_mean = (
             float(np.mean(behavioural_distances)) if behavioural_distances else 0.0
         )
-
-        behavioral_uncertainty_pearson_r = float("nan")
-        if (
-            is_uncertainty_mode
-            and surrogate_controller.last_uncertainty
-            and len(surrogate_controller.last_uncertainty) == len(behavioural_distances)
-        ):
-            uncertainty_arr = np.asarray(surrogate_controller.last_uncertainty)
-            distance_arr = np.asarray(behavioural_distances)
-            if np.var(uncertainty_arr) > 0 and np.var(distance_arr) > 0:
-                behavioral_uncertainty_pearson_r = float(
-                    pearsonr(uncertainty_arr, distance_arr)[0]
-                )
+        d_cv = (
+            float(np.std(behavioural_distances)) / behavioral_distance_mean
+            if behavioural_distances and behavioral_distance_mean > 1e-12
+            else 0.0
+        )
 
         if used_real_eval and generation % rl_injection_interval == 0:
             evolution_module.sync_rl_to_pop(
@@ -415,30 +404,6 @@ def SC_ERL(
         avg_fitness = np.mean(fitnesses) if fitnesses else 0.0
         best_fitness = max(fitnesses) if fitnesses else 0.0
         avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
-
-        real_fitness_values = [
-            f for f in surrogate_controller.last_real_fitness if f is not None
-        ]
-        fitness_real_n = len(real_fitness_values)
-        fitness_p10 = (
-            float(np.percentile(real_fitness_values, 10))
-            if real_fitness_values
-            else 0.0
-        )
-        fitness_p90 = (
-            float(np.percentile(real_fitness_values, 90))
-            if real_fitness_values
-            else 0.0
-        )
-        fitness_real_min = (
-            float(np.min(real_fitness_values)) if real_fitness_values else 0.0
-        )
-        fitness_real_max = (
-            float(np.max(real_fitness_values)) if real_fitness_values else 0.0
-        )
-        fitness_real_std = (
-            float(np.std(real_fitness_values)) if real_fitness_values else 0.0
-        )
 
         if (generation % 10 == 0 or total_steps >= n_steps) and debug:
             print_sc_erl_debug_summary(
@@ -489,18 +454,12 @@ def SC_ERL(
                 "eval_reward": eval_reward,
                 "eval_reward_best_pop": eval_reward,
                 "eval_reward_rl_actor": eval_reward_rl_actor,
-                "fitness_p10": fitness_p10,
-                "fitness_p90": fitness_p90,
-                "fitness_real_n": fitness_real_n,
-                "fitness_real_min": fitness_real_min,
-                "fitness_real_max": fitness_real_max,
-                "fitness_real_std": fitness_real_std,
                 "actor_loss": actor_loss,
                 "critic_loss": critic_loss,
                 "surrogate_used": surrogate_controller.mode == "surrogate",
                 "n_real": surrogate_controller.last_n_real,
                 "behavioral_distance_mean": behavioral_distance_mean,
-                "behavioral_uncertainty_pearson_r": behavioral_uncertainty_pearson_r,
+                "d_cv": d_cv,
             }
             metrics.update(
                 build_surrogate_metrics(

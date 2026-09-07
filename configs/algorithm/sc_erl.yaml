@@ -53,7 +53,6 @@ surrogate:
   e_star: 0.3
   e_hat_window: 10
   fitness_norm: tanh
-  lam: 1.0
 
 warmup:
   warmup_steps: 10

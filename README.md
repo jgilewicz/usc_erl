@@ -168,6 +168,22 @@ Otherwise → surrogate fitness via Lower Confidence Bound: `f_LCB = μ_Q − β
 | `evidential` | Single forward pass; analytic NIG epistemic variance `β/(v(α−1))` |
 | `random` | Probabilistic coin-flip baseline (no uncertainty estimation) |
 
+### Known limitation: ensemble disagreement is not a validated epistemic signal
+
+`surrogate.mode=ensemble` **inverts rank** across task classes — it beats `random` on DMC dog locomotion (Nemenyi rank 3.40 vs 5.60) but loses to it on classic MuJoCo (5.40 vs 4.00). We pre-registered two candidate explanations and tested both on a matched budget (`dog-walk` vs `Swimmer-v5`, 3 seeds, 500k steps, checkpointed at 20/60/100% of training) before looking at results — both were **refuted, not marginally**:
+
+| criterion | threshold to confirm | threshold to refute | result |
+|---|---|---|---|
+| action-sensitivity ratio (dog / Swimmer) | > 3× | < 2× | 0.85× |
+| `sigma_cv` (dog vs Swimmer) | dog > 5%, Swimmer < 2% | comparable | 2.00% vs 2.18% |
+
+Two further observations from the same runs, independent of the gate itself:
+
+- **`sigma_ratio_ood < 1` in every environment, every seed, every training phase.** The ensemble assigns *lower* disagreement to out-of-distribution actions (uniform random) than to the actor's own actions — the opposite of what an epistemic estimator should do. This isn't a property of one environment or one gate config; it looks like a property of critic-disagreement-on-(s,a) as an uncertainty signal in general, relevant to any disagreement-based method in RL, not just this gate.
+- **`gate_auc_d`** (behavioral-distance-augmented gate score, swept over `λ ∈ {0, 0.25, 0.5, 1, 2}`) never beat plain uncertainty-based gating on AUC — distance carries no signal the ensemble doesn't already have. Removed from the codebase (`_gate_score`, `surrogate.lam`); the analysis script (`scripts/analyze_ensemble_checkpoints.py`) still reports `corr_sigma_d` if this needs revisiting.
+
+Reproduction script and pre-registered pass/fail criteria: `scripts/analyze_ensemble_checkpoints.py`. Up to three attempts at a mechanistic explanation were budgeted; the first was unambiguous enough (not a marginal miss on either criterion) that the remaining two weren't spent. The mechanism is treated as an open problem for now — the paper reports the ranking gap without a causal explanation.
+
 ---
 
 ## Configuration Reference
