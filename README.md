@@ -53,16 +53,21 @@ ue_sc_erl/
 
 Requires Python 3.12 and [`uv`](https://github.com/astral-sh/uv).
 
+MuJoCo v5 / DMC and MyoSuite pin incompatible `mujoco`/`gymnasium` versions, so MyoSuite lives in
+its own venv directory (`.venv-myosuite`) rather than `.venv` — `task run` / `task run-myo` handle
+syncing the right one automatically:
+
 ```bash
-uv sync
+uv sync --extra mujoco-envs                                    # MuJoCo v5 + DMC → .venv
+UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite  # MyoSuite → .venv-myosuite
 ```
 
-Or with pip:
+Or with pip (pick the matching dependency set from `pyproject.toml`'s `[project.optional-dependencies]`):
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[mujoco-envs]"
 ```
 
 ---
@@ -84,7 +89,16 @@ SC-ERL `surrogate.mode` options: `dropout`, `ensemble`, `evidential`, `random`.
 ### Single DMC dog run
 
 ```bash
-task run-dmc ENV=dm_control/dog-stand-v0 MODE=ensemble SEED=0
+task run ALGO=sc_erl CLI_ARGS="env.id=dm_control/dog-stand-v0 surrogate.mode=ensemble"
+```
+
+### Single MyoSuite run
+
+MyoSuite pins an older `mujoco`/`gymnasium` than the MuJoCo v5/DMC stack, so it runs from a
+separate venv (`.venv-myosuite`) — `task run-myo` syncs and activates it automatically:
+
+```bash
+task run-myo ALGO=sc_erl ENV=myoHandReachRandom-v0
 ```
 
 ### SLURM (cluster)
@@ -101,6 +115,17 @@ TARGET_ENV=dm_control/dog-walk-v0  sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-trot-v0  sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-run-v0   sbatch --array=0-19 slurm_run_array.sh
 TARGET_ENV=dm_control/dog-fetch-v0 sbatch --array=0-19 slurm_run_array.sh
+```
+
+**MyoSuite** — 50 tasks per env (10 algos × 5 seeds), backend auto-detected from the `myo` prefix.
+Runs from a separate venv (`.venv-myosuite`) — build it once per cluster checkout:
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite
+TARGET_ENV=myoElbowPose1D6MRandom-v0 sbatch --array=0-49 slurm_run_array.sh
+TARGET_ENV=myoHandReachRandom-v0     sbatch --array=0-49 slurm_run_array.sh
+TARGET_ENV=myoHandPenTwirlRandom-v0  sbatch --array=0-49 slurm_run_array.sh
+TARGET_ENV=myoHandObjHoldRandom-v0   sbatch --array=0-49 slurm_run_array.sh
+TARGET_ENV=myoLegWalk-v0             sbatch --array=0-49 slurm_run_array.sh
 ```
 
 ### Reports
@@ -127,11 +152,12 @@ task clean
 
 ## Surrogate Gating Logic
 
-SC-ERL evaluates whether each candidate policy needs a real rollout or can be scored cheaply via the critic surrogate:
+SC-ERL evaluates whether each candidate policy needs a real rollout or can be scored cheaply via the critic surrogate. `surrogate.gate_mode` selects how the deterministic part of that decision is made:
 
-1. Compute epistemic uncertainty `σ_Q(πᵢ)` for every individual.
-2. If `σ_Q(πᵢ)` exceeds the population's 75th-percentile threshold, **or** a random ε-coin flip fires (ε=0.10) → real environment rollout.
-3. Otherwise → surrogate fitness via Lower Confidence Bound: `f_LCB = μ_Q − β·σ_Q`.
+- `topk` (default) — real-evaluate the `surrogate.rho` fraction of the population with the highest predicted uncertainty `σ_Q(πᵢ)`, plus a random ε-coin flip (ε=0.10) on the rest so the surrogate error can still be measured on an unbiased sample. `rho` is adapted every `surrogate.e_hat_window` generations toward a target normalized surrogate error `surrogate.e_star`.
+- `relative` (ablation) — real-evaluate if `σ_Q(πᵢ)` exceeds a MAD-based threshold (`surrogate.mad_k`), **or** the ε-coin flip fires.
+
+Otherwise → surrogate fitness via Lower Confidence Bound: `f_LCB = μ_Q − β·σ_Q`, squashed via `surrogate.fitness_norm` (`tanh`, default, or `clip`).
 
 ### Uncertainty methods
 
@@ -153,7 +179,11 @@ Key parameters in `configs/algorithm/sc_erl.yaml`:
 | `rl.policy_noise` / `rl.noise_clip` / `rl.policy_delay` | TD3 target-smoothing noise, clip, and actor update delay |
 | `surrogate.mode` | Uncertainty method: `dropout`, `ensemble`, `evidential`, `random` |
 | `surrogate.beta` | LCB penalty weight (higher → more real rollouts) |
-| `surrogate.omega` | Percentile threshold for gating (default: 75) |
+| `surrogate.omega` | Real-vs-surrogate coin-flip threshold, `random` mode only |
+| `surrogate.gate_mode` | Gating strategy: `topk` (rank-based, default) or `relative` (MAD-threshold ablation) |
+| `surrogate.rho` / `rho_min` / `rho_max` / `rho_eta` | `topk` real-eval budget fraction and its adaptation bounds/rate |
+| `surrogate.e_star` / `e_hat_window` | Target normalized surrogate error and the generation window `rho` is adapted over |
+| `surrogate.fitness_norm` | Surrogate fitness squashing: `tanh` (default) or `clip` |
 | `surrogate.k` | Replay buffer slice size for surrogate evaluation |
 | `surrogate.dropout_p` | Dropout probability for MC Dropout mode |
 | `surrogate.mc_samples` | Number of MC forward passes (T) |
@@ -224,9 +254,31 @@ Five DMC dog locomotion tasks are supported through [shimmy](https://github.com/
 | Fetch | `dm_control/dog-fetch-v0` |
 
 The environment backend is selected via `env.backend`:
-- `auto` (default) — detects `dm_control/`, `fancy/`, or `metaworld/` prefixes automatically.
+- `auto` (default) — detects `dm_control/`, `fancy/`, `metaworld/`, or `myo` prefixes automatically.
 - `mujoco` — force MuJoCo/Gymnasium without shimmy import.
 - `fancy_gym` — force shimmy import regardless of env ID.
+- `myosuite` — force MyoSuite import regardless of env ID.
 
 Environment-specific configs under `configs/algorithm/sc_erl/` are auto-loaded and already set `backend: fancy_gym` for all dog tasks.
+
+### MyoSuite (musculoskeletal control)
+
+Five [MyoSuite](https://myosuite.readthedocs.io/en/latest/suite.html) tasks are supported. MyoSuite
+pins `mujoco<3.7`/`gymnasium<1.3`, incompatible with the `mujoco>=3.10`/`gymnasium>=1.3` stack used
+for MuJoCo v5/DMC — it lives in its own venv directory, `.venv-myosuite` (`task run-myo` syncs and
+uses it automatically). See [Setup](#setup).
+
+| Task | Env ID |
+|------|--------|
+| Elbow pose (1D, 6 muscles) | `myoElbowPose1D6MRandom-v0` |
+| Hand reach | `myoHandReachRandom-v0` |
+| Hand pen twirl | `myoHandPenTwirlRandom-v0` |
+| Hand object hold | `myoHandObjHoldRandom-v0` |
+| Leg walk | `myoLegWalk-v0` |
+
+```bash
+task run-myo ALGO=sc_erl ENV=myoHandReachRandom-v0
+```
+
+Environment-specific configs under `configs/algorithm/sc_erl/` (e.g. `sc_erl_myoHandReachRandom-v0.yaml`) set `env.id`/`env.backend`; no surrogate/evolution hyperparameters have been tuned for these envs yet, so they inherit the global `sc_erl.yaml` defaults.
 

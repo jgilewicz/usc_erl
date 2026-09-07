@@ -1,0 +1,8 @@
+# @package _global_
+# MyoSuite myoHandReachRandom-v0
+env:
+  id: myoHandReachRandom-v0
+  backend: myosuite
+eval_env:
+  id: myoHandReachRandom-v0
+  backend: myosuite

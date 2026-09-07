@@ -1,21 +1,24 @@
-import torch
-import numpy as np
-import gymnasium as gym
 from collections import deque
 
-from modules.deep_modules import Actor, Critic
+import gymnasium as gym
+import numpy as np
+import torch
+
 from common.reply_buffer import Buffer
-from modules.evolution_module import EvolutionModule
-from common.wandb_logger import WandbLogger
 from common.utils import (
+    evaluate_policy,
+    print_erl_debug_summary,
+    rollout_policy,
+    soft_update,
     td3_train_critics,
     td3_update_actor,
-    soft_update,
     warmup,
-    evaluate_policy,
-    rollout_policy,
-    print_erl_debug_summary,
 )
+from common.wandb_logger import WandbLogger
+from modules.deep_modules import Actor, Critic
+from modules.evolution_module import EvolutionModule
+
+_CPU_DEVICE = torch.device("cpu")
 
 
 def ERL(
@@ -26,7 +29,7 @@ def ERL(
     eval_env: gym.Env,
     n_steps: int,
     batch_size: int = 64,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device = _CPU_DEVICE,
     actor_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
@@ -183,6 +186,14 @@ def ERL(
             noise_std=0.0,
         )
 
+        eval_reward_rl_actor = evaluate_policy(
+            policy=actor,
+            env=eval_env,
+            device=device,
+            episodes=evaluate_episodes,
+            noise_std=0.0,
+        )
+
         recent_rewards.append(eval_reward)
 
         population, elite_indices, unselect_indices = evolution_module.evolve(
@@ -254,19 +265,24 @@ def ERL(
         avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
         best_fitness = max(fitnesses) if fitnesses else 0.0
         avg_fitness = np.mean(fitnesses) if fitnesses else 0.0
+        fitness_real_n = len(fitnesses)
+        fitness_p10 = float(np.percentile(fitnesses, 10)) if fitnesses else 0.0
+        fitness_p90 = float(np.percentile(fitnesses, 90)) if fitnesses else 0.0
+        fitness_real_min = float(np.min(fitnesses)) if fitnesses else 0.0
+        fitness_real_max = float(np.max(fitnesses)) if fitnesses else 0.0
+        fitness_real_std = float(np.std(fitnesses)) if fitnesses else 0.0
 
-        if generation % 10 == 0 or total_steps >= n_steps:
-            if debug:
-                print_erl_debug_summary(
-                    generation=generation,
-                    total_steps=total_steps,
-                    avg_fitness=avg_fitness,
-                    best_fitness=best_fitness,
-                    avg_reward=avg_reward,
-                    eval_reward=eval_reward,
-                    actor_loss=actor_loss,
-                    critic_loss=critic_loss,
-                )
+        if debug and (generation % 10 == 0 or total_steps >= n_steps):
+            print_erl_debug_summary(
+                generation=generation,
+                total_steps=total_steps,
+                avg_fitness=avg_fitness,
+                best_fitness=best_fitness,
+                avg_reward=avg_reward,
+                eval_reward=eval_reward,
+                actor_loss=actor_loss,
+                critic_loss=critic_loss,
+            )
 
         if logger is not None:
             logger.log(
@@ -277,6 +293,14 @@ def ERL(
                     "best_population_fitness": best_fitness,
                     "avg_recent_reward": avg_reward,
                     "eval_reward": eval_reward,
+                    "eval_reward_best_pop": eval_reward,
+                    "eval_reward_rl_actor": eval_reward_rl_actor,
+                    "fitness_p10": fitness_p10,
+                    "fitness_p90": fitness_p90,
+                    "fitness_real_n": fitness_real_n,
+                    "fitness_real_min": fitness_real_min,
+                    "fitness_real_max": fitness_real_max,
+                    "fitness_real_std": fitness_real_std,
                     "actor_loss": actor_loss,
                     "critic_loss": critic_loss,
                 },

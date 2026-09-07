@@ -1,15 +1,16 @@
 from collections import deque
+from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
 import torch
+from scipy.stats import pearsonr
 
-from modules.ensemble_module import EnsembleModule
-from modules.evolution_module import EvolutionModule
-from modules.deep_modules import Actor, Critic, EvidentialCritic
 from common.reply_buffer import Buffer
 from common.surrogate_controller import SurrogateController, SurrogateMode
 from common.utils import (
+    behavioural_distance,
+    build_surrogate_metrics,
     evaluate_policy,
     print_sc_erl_debug_summary,
     rollout_policy,
@@ -19,6 +20,12 @@ from common.utils import (
     warmup,
 )
 from common.wandb_logger import WandbLogger
+from modules.deep_modules import Actor, Critic, EvidentialCritic
+from modules.ensemble_module import EnsembleModule
+from modules.evolution_module import EvolutionModule
+
+_CPU_DEVICE = torch.device("cpu")
+CHECKPOINT_FRACTIONS = (0.2, 0.6, 1.0)
 
 
 def SC_ERL(
@@ -29,7 +36,7 @@ def SC_ERL(
     eval_env: gym.Env,
     n_steps: int,
     batch_size: int = 64,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device = _CPU_DEVICE,
     actor_hidden_dim: int = 256,
     gamma: float = 0.99,
     tau: float = 0.005,
@@ -56,13 +63,24 @@ def SC_ERL(
     grad_clip_norm: float = 1.0,
     dropout_p: float = 0.2,
     mc_samples: int = 20,
-    epsilon: float = 0.10,
+    epsilon: float = 0.2,
     mutation_fraction: float = 0.1,
-    mad_k: float = 2.0,
+    mad_k: float = 2.483,
     beta_lr: float = 1e-3,
     policy_delay: int = 2,
     policy_noise: float = 0.2,
     noise_clip: float = 0.5,
+    gate_mode: str = "topk",
+    rho: float = 0.10,
+    rho_min: float = 0.05,
+    rho_max: float = 0.5,
+    rho_eta: float = 4,
+    e_star: float = 0.25,
+    e_hat_window: int = 10,
+    fitness_norm: str = "tanh",
+    lam: float = 1.0,
+    env_id: str = "",
+    seed: int = 0,
 ) -> float:
 
     state_dim = env.observation_space.shape[0]
@@ -198,12 +216,25 @@ def SC_ERL(
         crossover_mode=crossover_mode,
         mad_k=mad_k,
         beta_lr=beta_lr,
+        debug=debug,
+        gate_mode=gate_mode,
+        rho=rho,
+        rho_min=rho_min,
+        rho_max=rho_max,
+        rho_eta=rho_eta,
+        e_star=e_star,
+        e_hat_window=e_hat_window,
+        fitness_norm=fitness_norm,
+        lam=lam,
     )
 
     total_steps = warmup(env, replay_buffer, warmup_steps=warmup_steps)
 
     generation = 0
     recent_rewards = deque(maxlen=100)
+    checkpoint_steps = [int(n_steps * f) for f in CHECKPOINT_FRACTIONS]
+    next_checkpoint_idx = 0
+    env_slug = env_id.replace("/", "_").replace(":", "_") if env_id else "env"
 
     while total_steps < n_steps:
         generation += 1
@@ -219,6 +250,8 @@ def SC_ERL(
                 total_steps=total_steps,
                 warmup_steps=warmup_steps,
                 mutation_fraction=mutation_fraction,
+                actor=actor,
+                action_limit=action_limit,
             )
         )
         elite_indices = surrogate_controller.last_elite_indices
@@ -226,7 +259,11 @@ def SC_ERL(
 
         total_steps += evo_steps
 
-        surrogate_ratio = surrogate_controller.last_surrogate_ratio
+        is_uncertainty_mode = surrogate_mode in (
+            SurrogateMode.DROPOUT,
+            SurrogateMode.ENSEMBLE,
+            SurrogateMode.EVIDENTIAL,
+        )
 
         for fitness in fitnesses:
             recent_rewards.append(fitness)
@@ -238,6 +275,14 @@ def SC_ERL(
 
         eval_reward = evaluate_policy(
             policy=best_population_member,
+            env=eval_env,
+            device=device,
+            episodes=5,
+            noise_std=0.0,
+        )
+
+        eval_reward_rl_actor = evaluate_policy(
+            policy=actor,
             env=eval_env,
             device=device,
             episodes=5,
@@ -297,6 +342,71 @@ def SC_ERL(
                     soft_update(critic_2_target, critic_2, tau=tau)
                     soft_update(target_actor, actor, tau=tau)
 
+        while (
+            surrogate_mode == SurrogateMode.ENSEMBLE
+            and next_checkpoint_idx < len(checkpoint_steps)
+            and total_steps >= checkpoint_steps[next_checkpoint_idx]
+        ):
+            checkpoint_dir = Path("checkpoints")
+            checkpoint_dir.mkdir(exist_ok=True)
+            step_label = checkpoint_steps[next_checkpoint_idx]
+            obs_batch = replay_buffer.sample(
+                batch_size=min(5000, len(replay_buffer))
+            )["state"]
+            torch.save(
+                {
+                    "actor": actor.state_dict(),
+                    "critic": critic.state_dict(),
+                    "population": [p.state_dict() for p in population],
+                    "obs_batch": obs_batch.cpu().numpy(),
+                    "state_dim": state_dim,
+                    "action_dim": action_dim,
+                    "action_limit": action_limit,
+                    "actor_hidden_dim": actor_hidden_dim,
+                    "k_ensembles": k_ensembles,
+                    "seed": seed,
+                    "env_id": env_id,
+                    "total_steps": total_steps,
+                },
+                checkpoint_dir / f"ckpt_{env_slug}_seed{seed}_{step_label}.pt",
+            )
+            next_checkpoint_idx += 1
+
+        behavioural_distances: list[float] = []
+        if population and len(replay_buffer) > 0:
+            if surrogate_controller.last_obs_batch is not None:
+                distance_obs = torch.as_tensor(
+                    surrogate_controller.last_obs_batch,
+                    dtype=torch.float32,
+                    device=device,
+                )
+            else:
+                distance_obs = replay_buffer.sample(
+                    batch_size=min(k, len(replay_buffer))
+                )["state"].to(device)
+
+            behavioural_distances = [
+                behavioural_distance(policy, actor, distance_obs, action_limit)
+                for policy in population
+            ]
+
+        behavioral_distance_mean = (
+            float(np.mean(behavioural_distances)) if behavioural_distances else 0.0
+        )
+
+        behavioral_uncertainty_pearson_r = float("nan")
+        if (
+            is_uncertainty_mode
+            and surrogate_controller.last_uncertainty
+            and len(surrogate_controller.last_uncertainty) == len(behavioural_distances)
+        ):
+            uncertainty_arr = np.asarray(surrogate_controller.last_uncertainty)
+            distance_arr = np.asarray(behavioural_distances)
+            if np.var(uncertainty_arr) > 0 and np.var(distance_arr) > 0:
+                behavioral_uncertainty_pearson_r = float(
+                    pearsonr(uncertainty_arr, distance_arr)[0]
+                )
+
         if used_real_eval and generation % rl_injection_interval == 0:
             evolution_module.sync_rl_to_pop(
                 actor, population, fitnesses, elite_indices, unselect_indices
@@ -306,89 +416,100 @@ def SC_ERL(
         best_fitness = max(fitnesses) if fitnesses else 0.0
         avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
 
-        if generation % 10 == 0 or total_steps >= n_steps:
-            if debug:
-                _is_uncertainty_mode = surrogate_mode in (
-                    SurrogateMode.DROPOUT,
-                    SurrogateMode.ENSEMBLE,
-                    SurrogateMode.EVIDENTIAL,
-                )
-                print_sc_erl_debug_summary(
-                    generation=generation,
-                    total_steps=total_steps,
-                    avg_fitness=avg_fitness,
-                    best_fitness=best_fitness,
-                    avg_reward=avg_reward,
-                    eval_reward=eval_reward,
-                    evo_steps=evo_steps,
-                    actor_loss=actor_loss,
-                    critic_loss=critic_loss,
-                    uncertainty_mean=(
-                        surrogate_controller.last_uncertainty_mean
-                        if _is_uncertainty_mode
-                        else None
-                    ),
-                    uncertainty_max=(
-                        surrogate_controller.last_uncertainty_max
-                        if _is_uncertainty_mode
-                        else None
-                    ),
-                    uncertainty_threshold=(
-                        surrogate_controller.last_uncertainty_threshold
-                        if _is_uncertainty_mode
-                        else None
-                    ),
-                    surrogate_mode=surrogate_mode.name.lower(),
-                    raw_sigma_mean=(
-                        surrogate_controller.last_raw_sigma_mean
-                        if _is_uncertainty_mode
-                        else None
-                    ),
-                    raw_sigma_max=(
-                        surrogate_controller.last_raw_sigma_max
-                        if _is_uncertainty_mode
-                        else None
-                    ),
-                )
+        real_fitness_values = [
+            f for f in surrogate_controller.last_real_fitness if f is not None
+        ]
+        fitness_real_n = len(real_fitness_values)
+        fitness_p10 = (
+            float(np.percentile(real_fitness_values, 10))
+            if real_fitness_values
+            else 0.0
+        )
+        fitness_p90 = (
+            float(np.percentile(real_fitness_values, 90))
+            if real_fitness_values
+            else 0.0
+        )
+        fitness_real_min = (
+            float(np.min(real_fitness_values)) if real_fitness_values else 0.0
+        )
+        fitness_real_max = (
+            float(np.max(real_fitness_values)) if real_fitness_values else 0.0
+        )
+        fitness_real_std = (
+            float(np.std(real_fitness_values)) if real_fitness_values else 0.0
+        )
+
+        if (generation % 10 == 0 or total_steps >= n_steps) and debug:
+            print_sc_erl_debug_summary(
+                generation=generation,
+                total_steps=total_steps,
+                avg_fitness=avg_fitness,
+                best_fitness=best_fitness,
+                avg_reward=avg_reward,
+                eval_reward=eval_reward,
+                evo_steps=evo_steps,
+                actor_loss=actor_loss,
+                critic_loss=critic_loss,
+                uncertainty_mean=(
+                    surrogate_controller.last_uncertainty_mean
+                    if is_uncertainty_mode
+                    else None
+                ),
+                uncertainty_max=(
+                    surrogate_controller.last_uncertainty_max
+                    if is_uncertainty_mode
+                    else None
+                ),
+                uncertainty_threshold=(
+                    surrogate_controller.last_uncertainty_threshold
+                    if is_uncertainty_mode
+                    else None
+                ),
+                surrogate_mode=surrogate_mode.name.lower(),
+                raw_sigma_mean=(
+                    surrogate_controller.last_raw_sigma_mean
+                    if is_uncertainty_mode
+                    else None
+                ),
+                raw_sigma_max=(
+                    surrogate_controller.last_raw_sigma_max
+                    if is_uncertainty_mode
+                    else None
+                ),
+            )
 
         if logger is not None:
             metrics = {
                 "generation": generation,
                 "total_steps": total_steps,
-                "evo_steps": evo_steps,
                 "avg_population_fitness": avg_fitness,
                 "best_population_fitness": best_fitness,
                 "avg_recent_reward": avg_reward,
                 "eval_reward": eval_reward,
+                "eval_reward_best_pop": eval_reward,
+                "eval_reward_rl_actor": eval_reward_rl_actor,
+                "fitness_p10": fitness_p10,
+                "fitness_p90": fitness_p90,
+                "fitness_real_n": fitness_real_n,
+                "fitness_real_min": fitness_real_min,
+                "fitness_real_max": fitness_real_max,
+                "fitness_real_std": fitness_real_std,
                 "actor_loss": actor_loss,
                 "critic_loss": critic_loss,
                 "surrogate_used": surrogate_controller.mode == "surrogate",
-                "surrogate_ratio": surrogate_ratio,
+                "n_real": surrogate_controller.last_n_real,
+                "behavioral_distance_mean": behavioral_distance_mean,
+                "behavioral_uncertainty_pearson_r": behavioral_uncertainty_pearson_r,
             }
-            if surrogate_mode in (
-                SurrogateMode.DROPOUT,
-                SurrogateMode.ENSEMBLE,
-                SurrogateMode.EVIDENTIAL,
-            ):
-                metrics.update(
-                    {
-                        "uncertainty_mean": surrogate_controller.last_uncertainty_mean,
-                        "uncertainty_max": surrogate_controller.last_uncertainty_max,
-                        "uncertainty_threshold": surrogate_controller.last_uncertainty_threshold,
-                        "raw_sigma_mean": surrogate_controller.last_raw_sigma_mean,
-                        "raw_sigma_max": surrogate_controller.last_raw_sigma_max,
-                    }
-                )
-
             metrics.update(
-                {
-                    "surrogate_mode": surrogate_mode.value,
-                    "omega": omega,
-                    "k": k,
-                    "dropout_p": dropout_p,
-                    "mc_samples": mc_samples,
-                }
+                build_surrogate_metrics(
+                    surrogate_controller,
+                    include_uncertainty=is_uncertainty_mode,
+                )
             )
+
+            metrics.update({"surrogate_mode": surrogate_mode.value})
 
             logger.log(
                 metrics,

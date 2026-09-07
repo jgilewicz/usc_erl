@@ -1,10 +1,11 @@
-import torch
 import gymnasium as gym
-
+import torch
 from stable_baselines3 import SAC as _SB3_SAC
 
 from common.sb3_callback import EvalAndLogCallback
 from common.wandb_logger import WandbLogger
+
+_CPU_DEVICE = torch.device("cpu")
 
 
 def SAC(
@@ -12,7 +13,7 @@ def SAC(
     eval_env: gym.Env,
     n_steps: int,
     batch_size: int = 256,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device = _CPU_DEVICE,
     gamma: float = 0.99,
     tau: float = 0.005,
     learning_rate: float = 3e-4,

@@ -1,0 +1,8 @@
+# @package _global_
+# MyoSuite myoHandPenTwirlRandom-v0
+env:
+  id: myoHandPenTwirlRandom-v0
+  backend: myosuite
+eval_env:
+  id: myoHandPenTwirlRandom-v0
+  backend: myosuite

@@ -21,7 +21,7 @@ rl:
   noise_clip: 0.5  # smoothing noise clip
 
 evolution:
-  population_size: 10
+  population_size: 100
   mutation_std: 0.1
   mutation_prob: 0.9
   mutation_fraction: 0.1

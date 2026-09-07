@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import copy
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
-from modules.deep_modules import Actor, Critic
 from common.reply_buffer import Buffer
 from common.utils import get_flat_params, set_flat_params
+from modules.deep_modules import Actor, Critic
 
 
 class EvolutionModule:
@@ -320,15 +321,14 @@ class EvolutionModule:
 
         # Mutate all slots except the new elitist target slots
         for i in range(pop_size):
-            if i not in new_elitists:
-                if rng.random() < mutation_prob:
-                    mutated = self._clone_and_mutate(
-                        parent=new_population[i],
-                        mutation_std=mutation_std,
-                        mutation_fraction=mutation_fraction,
-                        rng=rng,
-                    )
-                    new_population[i].load_state_dict(mutated.state_dict())
+            if i not in new_elitists and rng.random() < mutation_prob:
+                mutated = self._clone_and_mutate(
+                    parent=new_population[i],
+                    mutation_std=mutation_std,
+                    mutation_fraction=mutation_fraction,
+                    rng=rng,
+                )
+                new_population[i].load_state_dict(mutated.state_dict())
 
         return new_population, new_elitists, unselect_indices
 

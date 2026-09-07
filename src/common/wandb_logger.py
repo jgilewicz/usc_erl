@@ -1,19 +1,20 @@
 import os
-from typing import Any, Optional
+from typing import Any
+
+from dotenv import load_dotenv
+from omegaconf import DictConfig
 
 import wandb
-from omegaconf import DictConfig
-from dotenv import load_dotenv
 
 
 class WandbLogger:
     def __init__(
         self,
         project: str,
-        name: Optional[str] = None,
-        entity: Optional[str] = None,
-        tags: Optional[list[str]] = None,
-        config: Optional[dict] = None,
+        name: str | None = None,
+        entity: str | None = None,
+        tags: list[str] | None = None,
+        config: dict | None = None,
     ):
         self._project = project
         self._name = name
@@ -25,7 +26,7 @@ class WandbLogger:
         self._initialized = False
         self.run = None
 
-    def init(self, config: Optional[dict] = None) -> None:
+    def init(self, config: dict | None = None) -> None:
         if not self._enabled:
             print("WandB disabled (no API key).")
             return
@@ -42,7 +43,7 @@ class WandbLogger:
 
         self._initialized = True
 
-    def log(self, metrics: dict[str, Any], step: Optional[int] = None) -> None:
+    def log(self, metrics: dict[str, Any], step: int | None = None) -> None:
         if not self._initialized or self.run is None:
             return
         wandb.log(metrics, step=step)

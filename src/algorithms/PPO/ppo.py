@@ -1,10 +1,11 @@
-import torch
 import gymnasium as gym
-
+import torch
 from stable_baselines3 import PPO as _SB3_PPO
 
 from common.sb3_callback import EvalAndLogCallback
 from common.wandb_logger import WandbLogger
+
+_CPU_DEVICE = torch.device("cpu")
 
 
 def PPO(
@@ -14,7 +15,7 @@ def PPO(
     rollout_steps: int = 2048,
     batch_size: int = 64,
     ppo_epochs: int = 10,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device = _CPU_DEVICE,
     gamma: float = 0.99,
     gae_lambda: float = 0.95,
     clip_param: float = 0.2,
