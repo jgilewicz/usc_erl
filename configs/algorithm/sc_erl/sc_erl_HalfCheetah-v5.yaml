@@ -3,6 +3,7 @@ evolution:
   elite_ratio: 0.1
   rl_injection_interval: 10
   eval_trials: 1
+  mutation_std: 0.05
 surrogate:
   beta: 4.581
   omega: 0.620
