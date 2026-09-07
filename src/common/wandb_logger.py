@@ -1,9 +1,10 @@
 import os
 from typing import Any
 
-import wandb
 from dotenv import load_dotenv
 from omegaconf import DictConfig
+
+import wandb
 
 
 class WandbLogger:
