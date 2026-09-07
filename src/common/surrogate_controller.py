@@ -8,12 +8,7 @@ import torch
 from scipy.stats.mstats import spearmanr
 
 from common.reply_buffer import Buffer
-from common.utils import (
-    auc_score,
-    behavioural_distance,
-    rollout_policy,
-    surrogate_fitness,
-)
+from common.utils import auc_score, rollout_policy, surrogate_fitness
 from modules.deep_modules import Actor, AdaptiveBeta, Critic, EvidentialCritic
 from modules.ensemble_module import EnsembleModule
 from modules.evolution_module import EvolutionModule
@@ -27,12 +22,6 @@ CV_OFFSET = 1.0
 MIN_BUFFER_FOR_ESTIMATE = 1
 EPS_POOL_SIZE = 500
 EPS_POOL_MIN = 30
-LAMBDA_SWEEP = (0.0, 0.25, 0.5, 1.0, 2.0)
-
-
-def _zscore(x: np.ndarray) -> np.ndarray:
-    s = x.std()
-    return (x - x.mean()) / s if s > 1e-12 else np.zeros_like(x)
 
 
 class SurrogateMode(Enum):
@@ -84,7 +73,6 @@ class SurrogateController:
         e_star: float = 0.25,
         e_hat_window: int = 10,
         fitness_norm: str = "clip",
-        lam: float = 1.0,
     ):
         if gate_mode not in ("topk", "relative"):
             raise ValueError(f"unknown gate_mode: {gate_mode!r}")
@@ -117,7 +105,6 @@ class SurrogateController:
         self._e_hat_generation_count = 0
 
         self.fitness_norm = fitness_norm
-        self.lam = lam
 
         self.adaptive_beta = AdaptiveBeta(init_value=beta).to(device)
         self._beta_optimizer = torch.optim.Adam(
@@ -162,24 +149,16 @@ class SurrogateController:
         self.last_gate_quality: dict[str, float] | None = None
         self._eps_u: deque[float] = deque(maxlen=EPS_POOL_SIZE)
         self._eps_e: deque[float] = deque(maxlen=EPS_POOL_SIZE)
-        self._eps_d: deque[float] = deque(maxlen=EPS_POOL_SIZE)
 
         self.last_per_state_mu: np.ndarray | None = None
         self.last_per_state_sigma: np.ndarray | None = None
         self.last_obs_batch: np.ndarray | None = None
-        self.last_behavioral_distance: list[float] | None = None
 
     @property
     def e_hat_mean(self) -> float:
         if not self._e_hat_history:
             return float("nan")
         return float(np.mean(self._e_hat_history))
-
-    @property
-    def running_real_scale(self) -> float:
-        if self._running_real_min is None or self._running_real_max is None:
-            return float("nan")
-        return float(self._running_real_max - self._running_real_min)
 
     @property
     def raw_sigma_cv(self) -> float:
@@ -198,8 +177,6 @@ class SurrogateController:
         total_steps: int = 0,
         warmup_steps: int = 0,
         mutation_fraction: float = 0.1,
-        actor: Actor | None = None,
-        action_limit: float = 1.0,
     ) -> tuple[list[Actor], list[float], int, bool]:
         self.last_uncertainty = []
         self._generation += 1
@@ -275,14 +252,6 @@ class SurrogateController:
                 surrogate_critic, population, obs
             )
             self._record_estimate(sigma, mu_per_state, sigma_per_state, obs)
-            self.last_behavioral_distance = (
-                [
-                    behavioural_distance(policy, actor, obs, action_limit)
-                    for policy in population
-                ]
-                if actor is not None
-                else None
-            )
             cv_values = self._cv(mu, sigma)
             threshold = self._update_uncertainty_metrics(cv_values)
 
@@ -435,20 +404,11 @@ class SurrogateController:
 
     def _surrogate_error(self, min_n=20):
         if len(self._eps_e) < min_n:
-            print(
-                f"gen={self._generation} e_hat blocked: "
-                f"eps_pool={len(self._eps_e)}/{min_n}"
-            )
             return None
         if self._running_real_min is None or self._running_real_max is None:
             return None
         scale = self._running_real_max - self._running_real_min
         if scale < 1e-8:
-            print(
-                f"gen={self._generation} e_hat blocked: "
-                f"real_min={self._running_real_min} real_max={self._running_real_max} "
-                f"scale={scale:.3e}"
-            )
             return None
         return float(
             np.mean(list(self._eps_e)[-40:]) / scale
@@ -462,8 +422,6 @@ class SurrogateController:
             if is_eps and fitness_i is not None:
                 self._eps_u.append(self.last_uncertainty[i])
                 self._eps_e.append(abs(scaled[i] - fitness_i))
-                if self.last_behavioral_distance is not None:
-                    self._eps_d.append(self.last_behavioral_distance[i])
 
         if len(self._eps_u) < EPS_POOL_MIN:
             self.last_gate_quality = None
@@ -475,18 +433,7 @@ class SurrogateController:
         self.last_gate_quality = {
             "auc_u": auc_score(u, y),
             "spearman": float(spearmanr(u, e).correlation),
-            "n_pool": float(len(u)),
         }
-
-        has_distance_pool = len(self._eps_d) == len(self._eps_u)
-        if has_distance_pool:
-            d = np.array(self._eps_d)
-            self.last_gate_quality["auc_d"] = auc_score(d, y)
-            sweep = ", ".join(
-                f"lam={lam}:{auc_score(self._gate_score(u, d, lam=lam), y):.4f}"
-                for lam in LAMBDA_SWEEP
-            )
-            print(f"gen={self._generation} gate_auc_sweep {sweep}")
 
     def _accumulate_rho_error(self) -> None:
         if self.gate_mode != "topk":
@@ -501,18 +448,6 @@ class SurrogateController:
                 self._update_rho(float(np.mean(self._e_hat_history)))
                 self._e_hat_history = []
             self._e_hat_generation_count = 0
-        print(
-            f"gen={self._generation} e_hat={e_hat} hist={len(self._e_hat_history)} "
-            f"cnt={self._e_hat_generation_count} rho={self.rho:.6f}"
-        )
-
-    def _gate_score(self, sigma, distances, lam: float | None = None):
-        lam_value = self.lam if lam is None else lam
-        u = np.asarray(sigma, dtype=float)
-        if lam_value == 0.0 or distances is None:
-            return u
-        d = np.asarray(distances, dtype=float)
-        return _zscore(u) + lam_value * _zscore(d)
 
     def _gated_evaluation(
         self,
