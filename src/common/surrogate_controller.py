@@ -8,7 +8,12 @@ import torch
 from scipy.stats.mstats import spearmanr
 
 from common.reply_buffer import Buffer
-from common.utils import auc_score, rollout_policy, surrogate_fitness
+from common.utils import (
+    auc_score,
+    behavioural_distance,
+    rollout_policy,
+    surrogate_fitness,
+)
 from modules.deep_modules import Actor, AdaptiveBeta, Critic, EvidentialCritic
 from modules.ensemble_module import EnsembleModule
 from modules.evolution_module import EvolutionModule
@@ -149,10 +154,12 @@ class SurrogateController:
         self.last_gate_quality: dict[str, float] | None = None
         self._eps_u: deque[float] = deque(maxlen=EPS_POOL_SIZE)
         self._eps_e: deque[float] = deque(maxlen=EPS_POOL_SIZE)
+        self._eps_d: deque[float] = deque(maxlen=EPS_POOL_SIZE)
 
         self.last_per_state_mu: np.ndarray | None = None
         self.last_per_state_sigma: np.ndarray | None = None
         self.last_obs_batch: np.ndarray | None = None
+        self.last_behavioral_distance: list[float] | None = None
 
     @property
     def e_hat_mean(self) -> float:
@@ -177,6 +184,8 @@ class SurrogateController:
         total_steps: int = 0,
         warmup_steps: int = 0,
         mutation_fraction: float = 0.1,
+        actor: Actor | None = None,
+        action_limit: float = 1.0,
     ) -> tuple[list[Actor], list[float], int, bool]:
         self.last_uncertainty = []
         self._generation += 1
@@ -252,6 +261,14 @@ class SurrogateController:
                 surrogate_critic, population, obs
             )
             self._record_estimate(sigma, mu_per_state, sigma_per_state, obs)
+            self.last_behavioral_distance = (
+                [
+                    behavioural_distance(policy, actor, obs, action_limit)
+                    for policy in population
+                ]
+                if actor is not None
+                else None
+            )
             cv_values = self._cv(mu, sigma)
             threshold = self._update_uncertainty_metrics(cv_values)
 
@@ -422,6 +439,8 @@ class SurrogateController:
             if is_eps and fitness_i is not None:
                 self._eps_u.append(self.last_uncertainty[i])
                 self._eps_e.append(abs(scaled[i] - fitness_i))
+                if self.last_behavioral_distance is not None:
+                    self._eps_d.append(self.last_behavioral_distance[i])
 
         if len(self._eps_u) < EPS_POOL_MIN:
             self.last_gate_quality = None
@@ -433,7 +452,13 @@ class SurrogateController:
         self.last_gate_quality = {
             "auc_u": auc_score(u, y),
             "spearman": float(spearmanr(u, e).correlation),
+            "n_pool": float(len(u)),
         }
+
+        has_distance_pool = len(self._eps_d) == len(self._eps_u)
+        if has_distance_pool:
+            d = np.array(self._eps_d)
+            self.last_gate_quality["auc_d"] = auc_score(d, y)
 
     def _accumulate_rho_error(self) -> None:
         if self.gate_mode != "topk":

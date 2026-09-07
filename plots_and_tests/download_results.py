@@ -1,5 +1,6 @@
 import os
 import re
+
 import pandas as pd
 import wandb
 from omegaconf import OmegaConf
@@ -121,12 +122,20 @@ def main():
         "uncertainty_mean",
         "uncertainty_max",
         "uncertainty_threshold",
-        "surrogate_ratio",
-        "critic_loss",
+        "n_real",  # surrogate_ratio = 1 - n_real/population_size, derived at analysis time
         "total_steps",
         "generation",
         "raw_sigma_mean",
         "raw_sigma_max",
+        "raw_sigma_cv",
+        "rho",
+        "e_hat_mean",
+        "gate_auc_u",
+        "gate_auc_d",
+        "gate_spearman",
+        "gate_n_pool",
+        "behavioral_distance_mean",
+        "d_cv",
     ]
     for metric in METRICS + ["summary"]:
         os.makedirs(os.path.join(script_dir, metric), exist_ok=True)
@@ -180,7 +189,7 @@ def main():
                         columns={"_step": "Step", metric: col_name}
                     )
                     metric_dfs[metric].append(history)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- wandb API can raise anything; skip run, keep downloading the rest
                 print(f"    Error downloading history for run {run.name}: {e}")
         for metric in METRICS:
             data_frames = metric_dfs[metric]
@@ -213,8 +222,8 @@ def main():
             preprocessed_runs.append(
                 {"run": run, "flat_config": flat_config, "flat_summary": flat_summary}
             )
-        sorted_config_keys = sorted(list(all_config_keys))
-        sorted_summary_keys = sorted(list(all_summary_keys))
+        sorted_config_keys = sorted(all_config_keys)
+        sorted_summary_keys = sorted(all_summary_keys)
         for item in preprocessed_runs:
             run = item["run"]
             flat_cfg = item["flat_config"]

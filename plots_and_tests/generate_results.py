@@ -1,11 +1,12 @@
 import glob
 import os
 import re
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import scipy.stats as stats
+from scipy import stats
 
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(
@@ -73,11 +74,24 @@ METHOD_LABELS = {
 
 PROPOSED_METHODS = ["sc_erl_ensemble", "sc_erl_dropout", "sc_erl_evidential"]
 
-SC_ERL_VARIANTS = ["sc_erl_random", "sc_erl_dropout", "sc_erl_ensemble", "sc_erl_evidential"]
+SC_ERL_VARIANTS = [
+    "sc_erl_random",
+    "sc_erl_dropout",
+    "sc_erl_ensemble",
+    "sc_erl_evidential",
+]
 
 METHOD_ORDER_BARS = [
-    "ppo", "ddpg", "td3", "sac", "crossq", "erl",
-    "sc_erl_random", "sc_erl_dropout", "sc_erl_ensemble", "sc_erl_evidential",
+    "ppo",
+    "ddpg",
+    "td3",
+    "sac",
+    "crossq",
+    "erl",
+    "sc_erl_random",
+    "sc_erl_dropout",
+    "sc_erl_ensemble",
+    "sc_erl_evidential",
 ]
 
 BUDGET_CUTOFFS = [200_000, 500_000, 1_000_000]
@@ -108,10 +122,19 @@ def load_environment_data(env_id, base_dir="."):
         "uncertainty_mean",
         "uncertainty_max",
         "uncertainty_threshold",
-        "surrogate_ratio",
+        "n_real",
         "generation",
         "raw_sigma_mean",
         "raw_sigma_max",
+        "raw_sigma_cv",
+        "rho",
+        "e_hat_mean",
+        "gate_auc_u",
+        "gate_auc_d",
+        "gate_spearman",
+        "gate_n_pool",
+        "behavioral_distance_mean",
+        "d_cv",
     ]
     run_data = {}
 
@@ -124,7 +147,7 @@ def load_environment_data(env_id, base_dir="."):
             df = df.replace(["Infinity", "inf", "inf.0"], np.nan)
 
             for col in df.columns:
-                if col == "Step" or col.endswith("__MIN") or col.endswith("__MAX"):
+                if col == "Step" or col.endswith(("__MIN", "__MAX")):
                     continue
 
                 method, seed, parsed_metric = None, None, None
@@ -147,10 +170,9 @@ def load_environment_data(env_id, base_dir="."):
                 run_data[method][seed].append(sub_df)
 
     merged_data = {}
-    for method in run_data:
+    for method, seed_data in run_data.items():
         merged_data[method] = {}
-        for seed in run_data[method]:
-            dfs = run_data[method][seed]
+        for seed, dfs in seed_data.items():
             if not dfs:
                 continue
             merged_df = dfs[0]
@@ -201,6 +223,17 @@ def load_environment_data(env_id, base_dir="."):
                             .ffill()
                             .bfill()
                         )
+
+    # surrogate_ratio isn't logged directly (rho adapts it dynamically, so the
+    # realized fraction is an observation, not a config identity) — derive it
+    # from the logged n_real and the run's population size.
+    pop_size = _get_population_size(env_id, base_dir)
+    if pop_size:
+        for seed_data in merged_data.values():
+            for df in seed_data.values():
+                if "n_real" in df.columns:
+                    df["surrogate_ratio"] = 1.0 - df["n_real"] / pop_size
+
     return merged_data
 
 
@@ -208,7 +241,7 @@ def get_stable_final_values(merged_data):
     stable_values = {}
     for method in merged_data:
         stable_values[method] = []
-        for seed, df in merged_data[method].items():
+        for df in merged_data[method].values():
             if "total_steps" not in df.columns:
                 continue
             y_metric = (
@@ -228,13 +261,13 @@ def get_stable_final_values(merged_data):
 
 
 def generate_sample_efficiency_plot(env_id, merged_data, out_path):
-    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    _fig, ax = plt.subplots(figsize=(8.5, 5.5))
     ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
 
     # Bezpieczne obliczanie maksymalnego kroku
     step_maxes = []
     for m in merged_data:
-        for s, df in merged_data[m].items():
+        for df in merged_data[m].values():
             if "total_steps" in df.columns and not df["total_steps"].empty:
                 step_maxes.append(df["total_steps"].max())
 
@@ -252,7 +285,7 @@ def generate_sample_efficiency_plot(env_id, merged_data, out_path):
         fill_alpha = 0.15 if is_proposed else 0.05
 
         interpolated_ys = []
-        for seed, df in merged_data[method].items():
+        for df in merged_data[method].values():
             y_metric = (
                 "eval_reward"
                 if "eval_reward" in df.columns and not df["eval_reward"].isna().all()
@@ -318,89 +351,82 @@ def generate_sample_efficiency_plot(env_id, merged_data, out_path):
     plt.close()
 
 
-def generate_surrogate_analysis_plot(env_id, merged_data, out_path):
-    surrogate_methods = [m for m in PROPOSED_METHODS if m in merged_data]
-    if not surrogate_methods:
+def generate_gate_dynamics_plot(env_id, merged_data, out_path):
+    """Fig. F-B: rho and e_hat on a dual axis vs. steps, one panel per gated mode."""
+    gated_methods = [m for m in PROPOSED_METHODS if m in merged_data]
+    if not gated_methods:
         return
 
-    fig, axes = plt.subplots(
-        1,
-        len(surrogate_methods),
-        figsize=(5 * len(surrogate_methods), 5.5),
-        sharey=False,
+    _fig, axes = plt.subplots(
+        1, len(gated_methods), figsize=(5 * len(gated_methods), 5.0), sharey=False
     )
     axes = np.atleast_1d(axes)
 
-    all_fit_vals = [
-        v
-        for m in surrogate_methods
-        for s, df in merged_data[m].items()
-        if "avg_population_fitness" in df.columns
-        for v in df["avg_population_fitness"].dropna().values
-    ]
-    y2_min, y2_max = (
-        (min(all_fit_vals) if all_fit_vals else -100),
-        (max(all_fit_vals) if all_fit_vals else 100),
-    )
-
-    for i, method in enumerate(surrogate_methods):
-        ax = axes[i]
+    for ax, method in zip(axes, gated_methods):
         ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
         color = METHOD_COLORS.get(method, "#000000")
 
-        gen_grid = np.linspace(0, 1400, 141)
-        mean_uncertainties, avg_fitnesses = [], []
+        step_maxes = [
+            df["total_steps"].max()
+            for s, df in merged_data[method].items()
+            if "total_steps" in df.columns and not df["total_steps"].isna().all()
+        ]
+        if not step_maxes:
+            continue
+        step_grid = np.linspace(0, max(step_maxes), 200)
 
-        for seed, df in merged_data[method].items():
-            required = ["generation", "uncertainty_mean", "avg_population_fitness"]
-            if not all(col in df.columns for col in required):
+        rho_curves, e_hat_curves = [], []
+        for df in merged_data[method].values():
+            if not all(c in df.columns for c in ["total_steps", "rho", "e_hat_mean"]):
                 continue
             temp_df = (
-                df[required]
-                .dropna(subset=["generation", "uncertainty_mean"])
-                .sort_values("generation")
+                df[["total_steps", "rho", "e_hat_mean"]]
+                .dropna()
+                .sort_values("total_steps")
             )
             if temp_df.empty:
                 continue
-            mean_uncertainties.append(
+            rho_curves.append(
                 np.interp(
-                    gen_grid,
-                    temp_df["generation"].values,
-                    temp_df["uncertainty_mean"].values,
+                    step_grid, temp_df["total_steps"].values, temp_df["rho"].values
                 )
             )
-            avg_fitnesses.append(
+            e_hat_curves.append(
                 np.interp(
-                    gen_grid,
-                    temp_df["generation"].values,
-                    temp_df["avg_population_fitness"].values,
+                    step_grid,
+                    temp_df["total_steps"].values,
+                    temp_df["e_hat_mean"].values,
                 )
             )
 
-        if not mean_uncertainties:
+        if not rho_curves:
             continue
-        u_smooth = smooth_series(np.mean(mean_uncertainties, axis=0), window=7)
-        f_smooth = smooth_series(np.mean(avg_fitnesses, axis=0), window=7)
+        rho_smooth = smooth_series(np.mean(rho_curves, axis=0), window=7)
+        e_hat_smooth = smooth_series(np.mean(e_hat_curves, axis=0), window=7)
 
-        ax.set_xlabel("Generations", labelpad=10)
-        ax.set_ylabel("Uncertainty Estimation", color=color, labelpad=10)
+        ax.set_xlabel("Environmental Interaction Steps", labelpad=10)
+        ax.set_ylabel(r"$\rho$ (gated fraction)", color=color, labelpad=10)
         ax.tick_params(axis="y", labelcolor=color)
+        ax.xaxis.set_major_formatter(
+            plt.FuncFormatter(
+                lambda x, p: f"{x / 1e6:.1f}M" if x >= 1e6 else f"{x / 1e3:.0f}k"
+            )
+        )
         (l1,) = ax.plot(
-            gen_grid, u_smooth, color=color, linewidth=1.5, label="Uncertainty Mean"
+            step_grid, rho_smooth, color=color, linewidth=1.6, label=r"$\rho$"
         )
 
         ax2 = ax.twinx()
-        ax2.set_ylabel("Average Population Fitness", color="#de8f05", labelpad=10)
+        ax2.set_ylabel(r"$\hat{e}$ (surrogate error)", color="#de8f05", labelpad=10)
         ax2.tick_params(axis="y", labelcolor="#de8f05")
-        ax2.set_ylim(y2_min - 0.05 * abs(y2_min), y2_max + 0.05 * abs(y2_max))
         ax2.grid(False)
         (l2,) = ax2.plot(
-            gen_grid,
-            f_smooth,
+            step_grid,
+            e_hat_smooth,
             color="#de8f05",
-            linewidth=1.2,
+            linewidth=1.4,
             linestyle="-.",
-            label="Avg Pop Fitness",
+            label=r"$\hat{e}$",
         )
 
         ax.legend(
@@ -416,111 +442,69 @@ def generate_surrogate_analysis_plot(env_id, merged_data, out_path):
         sns.despine(ax=ax, top=True, left=False, right=False)
 
     plt.suptitle(
-        f"Surrogate Uncertainty & Fitness Analysis - {env_id}",
-        fontsize=14,
-        y=0.98,
-        fontweight="bold",
+        f"Gate Controller Dynamics - {env_id}", fontsize=14, y=0.98, fontweight="bold"
     )
     plt.tight_layout()
     plt.savefig(out_path, dpi=300)
     plt.close()
 
 
-def generate_critic_correlation_plot(env_id, base_dir, out_path):
-    df_loss_path = os.path.join(base_dir, "critic_loss", f"{env_id}.csv")
-    df_mean_path = os.path.join(base_dir, "uncertainty_mean", f"{env_id}.csv")
-    if not os.path.exists(df_loss_path) or not os.path.exists(df_mean_path):
-        return None
+def generate_gate_scatter_plot(env_id, merged_data, out_path):
+    """Fig. F-C: mean uncertainty vs. surrogate error, aggregated over the whole run.
 
-    df_loss, df_mean = pd.read_csv(df_loss_path), pd.read_csv(df_mean_path)
-    valid_methods_data = {}
+    Points are per-generation aggregates (mean uncertainty of the epsilon-explored
+    individuals that generation vs. the windowed surrogate error e_hat) rather than
+    raw per-individual pairs — the logged history only retains the scalar
+    per-generation gate summary, not each epsilon-sampled individual's (u, e).
+    """
+    gated_methods = [m for m in PROPOSED_METHODS if m in merged_data]
+    if not gated_methods:
+        return
 
-    for method in PROPOSED_METHODS:
-        seeds = [
-            int(match.group(1))
-            for col in df_loss.columns
-            if (
-                match := re.match(
-                    rf"^{method}_{re.escape(env_id)}_seed(\d+) - critic_loss$", col
-                )
-            )
-        ]
-        all_x, all_y = [], []
-        for seed in seeds:
-            col_loss, col_mean = (
-                f"{method}_{env_id}_seed{seed} - critic_loss",
-                f"{method}_{env_id}_seed{seed} - uncertainty_mean",
-            )
-            if col_loss not in df_loss.columns or col_mean not in df_mean.columns:
-                continue
-            merged = pd.merge(
-                df_loss[["Step", col_loss]].dropna(),
-                df_mean[["Step", col_mean]].dropna(),
-                on="Step",
-                how="inner",
-            )
-            if not merged.empty:
-                all_x.extend(
-                    pd.to_numeric(merged[col_loss], errors="coerce").fillna(0).values
-                )
-                all_y.extend(
-                    pd.to_numeric(merged[col_mean], errors="coerce").fillna(0).values
-                )
-        if all_x and all_y:
-            valid_methods_data[method] = (np.array(all_x), np.array(all_y))
+    _fig, axes = plt.subplots(
+        1, len(gated_methods), figsize=(5 * len(gated_methods), 4.5), squeeze=False
+    )
 
-    if not valid_methods_data:
-        return None
-
-    n_plots = len(valid_methods_data)
-    fig, axes = plt.subplots(1, n_plots, figsize=(5 * n_plots, 4.5), squeeze=False)
-    correlations = []
-
-    for i, (method, (x, y)) in enumerate(valid_methods_data.items()):
+    for i, method in enumerate(gated_methods):
         ax = axes[0][i]
         ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
-
-        p_corr = (
-            np.corrcoef(x, y)[0, 1]
-            if len(x) > 1 and np.var(x) > 0 and np.var(y) > 0
-            else 0.0
-        )
-        s_corr = pd.Series(x).rank().corr(pd.Series(y).rank(), method="pearson")
-        label = METHOD_LABELS.get(method, method)
-        correlations.append(
-            {"Method": label, "Pearson": p_corr, "Spearman": s_corr, "N": len(x)}
-        )
-
         color = METHOD_COLORS.get(method, "#000000")
-        ax.scatter(
-            x, y, color=color, alpha=0.3, s=15, edgecolor="none", label="Steps Metrics"
-        )
 
-        if len(x) > 1 and np.var(x) > 0:
-            slope, intercept = np.polyfit(x, y, 1)
-            x_grid = np.linspace(min(x), max(x), 100)
-            ax.plot(
-                x_grid,
-                slope * x_grid + intercept,
-                color="#333333",
-                linestyle="--",
-                linewidth=1.2,
-                label="Trendline",
-            )
+        u_vals, e_vals = [], []
+        for df in merged_data[method].values():
+            if not all(c in df.columns for c in ["uncertainty_mean", "e_hat_mean"]):
+                continue
+            temp_df = df[["uncertainty_mean", "e_hat_mean"]].dropna()
+            u_vals.extend(temp_df["uncertainty_mean"].values)
+            e_vals.extend(temp_df["e_hat_mean"].values)
+
+        label = METHOD_LABELS.get(method, method)
+        if len(u_vals) < 2:
+            ax.set_title(label, fontsize=11, fontweight="bold")
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center")
+            continue
+
+        u_arr, e_arr = np.array(u_vals), np.array(e_vals)
+        rho_corr = (
+            pd.Series(u_arr).corr(pd.Series(e_arr), method="spearman")
+            if np.var(u_arr) > 0 and np.var(e_arr) > 0
+            else np.nan
+        )
+        ax.scatter(u_arr, e_arr, color=color, alpha=0.3, s=15, edgecolor="none")
 
         ax.set_title(
-            f"{label}\n(Pearson r = {p_corr:.3f})",
+            f"{label}\n"
+            + (f"($\\rho$ = {rho_corr:.3f})" if pd.notna(rho_corr) else ""),
             fontsize=11,
             pad=10,
             fontweight="bold",
         )
-        ax.set_xlabel("Critic TD Loss", labelpad=8)
-        ax.set_ylabel("Epistemic Uncertainty", labelpad=8)
-        ax.legend(loc="upper right", frameon=True)
+        ax.set_xlabel("Mean Uncertainty (per generation)", labelpad=8)
+        ax.set_ylabel("Surrogate Error $\\hat{e}$", labelpad=8)
         sns.despine(ax=ax, top=True, right=True)
 
     plt.suptitle(
-        f"Critic Epistemic Uncertainty vs. TD Loss - {env_id}",
+        f"Uncertainty vs. Surrogate Error, $\\epsilon$-sampled Individuals - {env_id}",
         fontsize=13,
         y=0.98,
         fontweight="bold",
@@ -528,7 +512,163 @@ def generate_critic_correlation_plot(env_id, base_dir, out_path):
     plt.tight_layout()
     plt.savefig(out_path, dpi=300)
     plt.close()
-    return correlations
+
+
+def generate_behavioral_uncertainty_scatter_plot(env_id, merged_data, out_path):
+    """Fig. F-D: per-generation mean epistemic uncertainty (of the pi_j policies)
+    vs. mean behavioural distance between each pi_j and the RL actor, aggregated
+    over the whole run. Pearson r (scipy) is annotated per subplot.
+    """
+    gated_methods = [m for m in PROPOSED_METHODS if m in merged_data]
+    if not gated_methods:
+        return
+
+    _fig, axes = plt.subplots(
+        1, len(gated_methods), figsize=(5 * len(gated_methods), 4.5), squeeze=False
+    )
+
+    for i, method in enumerate(gated_methods):
+        ax = axes[0][i]
+        ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
+        color = METHOD_COLORS.get(method, "#000000")
+
+        u_vals, d_vals = [], []
+        for df in merged_data[method].values():
+            required = ["uncertainty_mean", "behavioral_distance_mean"]
+            if not all(c in df.columns for c in required):
+                continue
+            temp_df = df[required].dropna()
+            u_vals.extend(temp_df["uncertainty_mean"].values)
+            d_vals.extend(temp_df["behavioral_distance_mean"].values)
+
+        label = METHOD_LABELS.get(method, method)
+        if len(u_vals) < 2:
+            ax.set_title(label, fontsize=11, fontweight="bold")
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center")
+            continue
+
+        u_arr, d_arr = np.array(u_vals), np.array(d_vals)
+        if np.var(u_arr) > 0 and np.var(d_arr) > 0:
+            pearson_r, pearson_p = stats.pearsonr(u_arr, d_arr)
+        else:
+            pearson_r, pearson_p = np.nan, np.nan
+        ax.scatter(u_arr, d_arr, color=color, alpha=0.3, s=15, edgecolor="none")
+
+        title_stats = (
+            f"($r$ = {pearson_r:.3f}, $p$ = {pearson_p:.2e})"
+            if pd.notna(pearson_r)
+            else ""
+        )
+        ax.set_title(f"{label}\n{title_stats}", fontsize=11, pad=10, fontweight="bold")
+        ax.set_xlabel("Mean Uncertainty (per generation)", labelpad=8)
+        ax.set_ylabel("Mean Behavioural Distance $\\pi_j$ vs. RL", labelpad=8)
+        sns.despine(ax=ax, top=True, right=True)
+
+    plt.suptitle(
+        f"Policy Uncertainty vs. Behavioural Distance from RL Actor - {env_id}",
+        fontsize=13,
+        y=0.98,
+        fontweight="bold",
+    )
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+
+
+def _final_window_mean(df, col, frac=0.1):
+    """Mean of ``col`` over the last ``frac`` of the run (by total_steps)."""
+    if "total_steps" not in df.columns or col not in df.columns:
+        return np.nan
+    sub = df[["total_steps", col]].dropna()
+    if sub.empty:
+        return np.nan
+    max_steps = sub["total_steps"].max()
+    window = sub[sub["total_steps"] >= max_steps * (1 - frac)]
+    window = window if not window.empty else sub
+    return float(window[col].mean())
+
+
+def _overall_mean(df, col):
+    if col not in df.columns:
+        return np.nan
+    vals = df[col].dropna()
+    return float(vals.mean()) if not vals.empty else np.nan
+
+
+def get_gate_quality_values(merged_data):
+    """Per-method, per-seed gate-quality summary (final-window mean of each metric).
+
+    Only meaningful for the uncertainty-gated SC-ERL variants — the underlying
+    ``gate_*``/``rho``/``e_hat_mean`` metrics are only logged from
+    ``SurrogateController._gated_evaluation`` (dropout/ensemble/evidential).
+    """
+    out = {}
+    for method in PROPOSED_METHODS:
+        if method not in merged_data:
+            continue
+        rows = []
+        for df in merged_data[method].values():
+            auc_u = _final_window_mean(df, "gate_auc_u")
+            auc_d = _final_window_mean(df, "gate_auc_d")
+            spearman = _final_window_mean(df, "gate_spearman")
+            n_pool = _final_window_mean(df, "gate_n_pool")
+            if np.isnan(auc_u) and np.isnan(spearman):
+                continue
+            rows.append(
+                {
+                    "auc_u": auc_u,
+                    "auc_d": auc_d,
+                    "spearman": spearman,
+                    "n_pool": n_pool,
+                }
+            )
+        if rows:
+            out[method] = rows
+    return out
+
+
+def get_gating_cost_values(env_id, merged_data, base_dir):
+    """Per-method budget/cost summary: final rho, real evals/gen, generations, surrogate ratio."""
+    pop_size = _get_population_size(env_id, base_dir)
+    out = {}
+    for method in SC_ERL_VARIANTS + ["erl"]:
+        if method not in merged_data:
+            continue
+        rows = []
+        for df in merged_data[method].values():
+            gens = df["generation"].max() if "generation" in df.columns else np.nan
+            ratio = _overall_mean(df, "surrogate_ratio")
+            rho_final = _final_window_mean(df, "rho")
+            real_evals = (
+                pop_size * (1 - ratio)
+                if pop_size is not None and not np.isnan(ratio)
+                else np.nan
+            )
+            if np.isnan(gens) and np.isnan(ratio):
+                continue
+            rows.append(
+                {
+                    "rho_final": rho_final,
+                    "real_evals_gen": real_evals,
+                    "generations": gens,
+                    "surrogate_ratio": ratio,
+                }
+            )
+        if rows:
+            out[method] = rows
+    return out
+
+
+def _get_population_size(env_id, base_dir):
+    summary_path = os.path.join(base_dir, "summary", f"{env_id}.csv")
+    if not os.path.exists(summary_path):
+        return None
+    df = pd.read_csv(summary_path)
+    col = "evolution.population_size"
+    if col not in df.columns:
+        return None
+    vals = pd.to_numeric(df[col], errors="coerce").dropna()
+    return float(vals.mean()) if not vals.empty else None
 
 
 def generate_speedup_plot(env_id, merged_data, out_path):
@@ -557,7 +697,7 @@ def generate_speedup_plot(env_id, merged_data, out_path):
         return
     step_grid = np.linspace(0, max(step_maxes), 200)
 
-    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    _fig, ax = plt.subplots(figsize=(8.5, 5.5))
     ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
 
     for method in evo_methods:
@@ -567,7 +707,7 @@ def generate_speedup_plot(env_id, merged_data, out_path):
         linestyle = "-" if method in PROPOSED_METHODS else "--"
 
         interpolated_gens = []
-        for seed, df in merged_data[method].items():
+        for df in merged_data[method].values():
             if "total_steps" not in df.columns or "generation" not in df.columns:
                 continue
             temp_df = (
@@ -650,9 +790,10 @@ def generate_ratio_plot(env_id, merged_data, out_path):
     gen_end = min(max(gen_maxes), 600) if gen_maxes else 600
     gen_grid = np.linspace(0, gen_end, 200)
 
-    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    _fig, ax = plt.subplots(figsize=(8.5, 4.5))
     ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
 
+    any_seed_end_marked = False
     for method in ratio_methods:
         color = METHOD_COLORS.get(method, "#000000")
         label = METHOD_LABELS.get(method, method)
@@ -660,7 +801,8 @@ def generate_ratio_plot(env_id, merged_data, out_path):
         linestyle = "-" if method in PROPOSED_METHODS else "--"
 
         interpolated_ratios = []
-        for seed, df in merged_data[method].items():
+        seed_end_gens = []
+        for df in merged_data[method].values():
             if "generation" not in df.columns or "surrogate_ratio" not in df.columns:
                 continue
             temp_df = (
@@ -675,6 +817,7 @@ def generate_ratio_plot(env_id, merged_data, out_path):
                     temp_df["surrogate_ratio"].values,
                 )
             )
+            seed_end_gens.append(float(temp_df["generation"].max()))
 
         if not interpolated_ratios:
             continue
@@ -697,6 +840,17 @@ def generate_ratio_plot(env_id, merged_data, out_path):
             alpha=0.15,
         )
 
+        # Beyond a seed's last recorded generation, np.interp holds the value
+        # flat — the mean then steps whenever a seed drops out. Mark those
+        # generations so the steps in the curve are legible as an artefact,
+        # not a real change in surrogate utilization.
+        for end_gen in sorted(set(seed_end_gens)):
+            if end_gen < gen_end - 1e-6:
+                ax.axvline(
+                    end_gen, color=color, linestyle=":", linewidth=0.8, alpha=0.5
+                )
+                any_seed_end_marked = True
+
     ax.set_title(
         f"Surrogate Utilization Dynamics - {env_id}",
         fontsize=13,
@@ -707,8 +861,97 @@ def generate_ratio_plot(env_id, merged_data, out_path):
     ax.set_ylabel("Surrogate Ratio", labelpad=10)
     ax.set_ylim(-0.05, 1.05)
     sns.despine(ax=ax, top=True, right=True)
+    handles, labels = ax.get_legend_handles_labels()
+    if any_seed_end_marked:
+        handles.append(
+            plt.Line2D([0], [0], color="#555555", linestyle=":", linewidth=0.8)
+        )
+        labels.append("seed ends (fewer seeds beyond)")
     ax.legend(
+        handles,
+        labels,
         loc="lower right",
+        frameon=True,
+        facecolor="white",
+        framealpha=0.8,
+        edgecolor="#f2f2f2",
+        fontsize=8,
+    )
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+
+
+def generate_raw_sigma_cv_plot(env_id, merged_data, out_path):
+    """Raw ensemble-disagreement CV across the population, one line per gated mode.
+
+    Explains why gate_mode=relative's fixed MAD threshold failed: population
+    spread in raw_sigma sits at 0.5-1% for most of training, too small a
+    signal for a static cutoff to separate individuals on.
+    """
+    gated_methods = [m for m in PROPOSED_METHODS if m in merged_data]
+    if not gated_methods:
+        return
+
+    step_maxes = [
+        df["total_steps"].max()
+        for m in gated_methods
+        for s, df in merged_data[m].items()
+        if "total_steps" in df.columns and not df["total_steps"].isna().all()
+    ]
+    if not step_maxes:
+        return
+    step_grid = np.linspace(0, max(step_maxes), 200)
+
+    _fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    ax.grid(True, which="both", color="#f2f2f2", linestyle="-", linewidth=0.5)
+
+    for method in gated_methods:
+        color = METHOD_COLORS.get(method, "#333333")
+        label = METHOD_LABELS.get(method, method)
+
+        cv_curves = []
+        for df in merged_data[method].values():
+            required = ["total_steps", "raw_sigma_cv"]
+            if not all(col in df.columns for col in required):
+                continue
+            temp_df = df[required].dropna().sort_values("total_steps")
+            if temp_df.empty:
+                continue
+            cv_curves.append(
+                np.interp(
+                    step_grid,
+                    temp_df["total_steps"].values,
+                    temp_df["raw_sigma_cv"].values,
+                )
+            )
+
+        if not cv_curves:
+            continue
+        mean_cv = smooth_series(np.mean(cv_curves, axis=0), window=7)
+        std_cv = smooth_series(np.std(cv_curves, axis=0), window=7)
+
+        ax.plot(step_grid, mean_cv, label=label, color=color, linewidth=1.8)
+        ax.fill_between(
+            step_grid, mean_cv - std_cv, mean_cv + std_cv, color=color, alpha=0.15
+        )
+
+    ax.set_title(
+        f"Ensemble Disagreement Spread Across Population - {env_id}",
+        fontsize=13,
+        pad=15,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Environmental Interaction Steps", labelpad=10)
+    ax.set_ylabel(r"raw $\sigma$ CV (population)", labelpad=10)
+    ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(
+            lambda x, p: f"{x / 1e6:.1f}M" if x >= 1e6 else f"{x / 1e3:.0f}k"
+        )
+    )
+    sns.despine(ax=ax, top=True, right=True)
+    ax.legend(
+        loc="upper right",
         frameon=True,
         facecolor="white",
         framealpha=0.8,
@@ -789,10 +1032,13 @@ def build_summary_table_latex(env_id, base_dir="."):
 
         # Zabezpieczenie przed NaN w odchyleniu standardowym (std)
         r_s_str = f"{r_s:.2f}" if pd.notna(r_s) else "0.00"
-        b_s_str = f"{b_s:.2f}" if pd.notna(b_s) else "0.00"
         t_s_str = f"{t_s:.2f}" if pd.notna(t_s) else "0.00"
 
-        tex += f"{label} & ${r_m:.2f} \\pm {r_s_str}$ & ${b_m:.2f} \\pm {b_s_str}$ & ${
+        # Baselines without a population (PPO/TD3/DDPG/SAC/CrossQ) never log
+        # best_population_fitness — show em-dash instead of "nan +/- 0.00".
+        best_pop_str = f"${b_m:.2f} \\pm {b_s:.2f}$" if pd.notna(b_m) else "---"
+
+        tex += f"{label} & ${r_m:.2f} \\pm {r_s_str}$ & {best_pop_str} & ${
             t_m:.2f} \\pm {t_s_str}$ \\\\\n"
 
     tex += "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
@@ -865,7 +1111,8 @@ def build_significance_table_latex(env_id, stable_values, alpha=0.05):
                         group_A, group_B, alternative="two-sided"
                     )[1]
                 comparisons.append((ours, base, test_name, float(p_val)))
-            except Exception:
+            except Exception as e:  # noqa: BLE001 -- scipy can raise on degenerate samples; skip this pair, keep testing the rest
+                print(f"    Warning: significance test {ours} vs {base} failed: {e}")
                 continue
 
     if not comparisons:
@@ -915,7 +1162,11 @@ def build_significance_table_latex(env_id, stable_values, alpha=0.05):
             )
         tex += "\\hline\n"
 
-    present = [b for b in baselines if len([v for v in stable_values.get(b, []) if not np.isnan(v)]) >= 2]
+    present = [
+        b
+        for b in baselines
+        if len([v for v in stable_values.get(b, []) if not np.isnan(v)]) >= 2
+    ]
     missing = [b for b in baselines if b not in present]
     if missing:
         missing_labels = ", ".join(METHOD_LABELS.get(m, m) for m in missing)
@@ -924,21 +1175,80 @@ def build_significance_table_latex(env_id, stable_values, alpha=0.05):
     return tex
 
 
-def build_correlation_table_latex(env_id, corr_data):
-    if not corr_data:
-        return "% No critic correlation data available\n"
+def build_gate_quality_table_latex(env_id, gate_quality_values):
+    if not gate_quality_values:
+        return "% No gate-quality data available\n"
+
     tex = "\\begin{table}[htbp]\n\\centering\n"
-    tex += f"\\caption{{Correlation Analysis between Critic TD Loss and Epistemic Uncertainty (\\texttt{{{
-        env_id
-    }}}).}}\n"
-    tex += f"\\label{{tab:corr_{env_id}}}\n"
-    tex += "\\begin{tabular}{llcc}\n\\toprule\n"
-    tex += "\\textbf{Algorithm / Method} & \\textbf{Pearson $r$} & \\textbf{Spearman $\\rho$} & \\textbf{Sample Size ($N$)} \\\\\n\\midrule\n"
-    for row in corr_data:
-        tex += f"{row['Method']} & {row['Pearson']:.4f} & {row['Spearman']:.4f} & {row['N']} \\\\\n"
+    tex += (
+        "\\caption{Gate quality for \\texttt{"
+        f"{env_id}"
+        "}: how well the gate's uncertainty signal (\\textbf{AUC-u}) and, "
+        "separately, behavioural distance (\\textbf{AUC-d}) discriminate "
+        "high-error individuals, plus their rank correlation with error "
+        "($\\boldsymbol{\\rho(u,e)}$) and the epsilon-pool size the estimate "
+        "rests on.}\n"
+    )
+    tex += f"\\label{{tab:gate_quality_{env_id}}}\n"
+    tex += "\\begin{tabular}{lcccc}\n\\toprule\n"
+    tex += (
+        "\\textbf{Method} & \\textbf{AUC-u} & \\textbf{AUC-d} & "
+        "$\\boldsymbol{\\rho(u,e)}$ & \\textbf{n pool} \\\\\n\\midrule\n"
+    )
+    for method in PROPOSED_METHODS:
+        rows = gate_quality_values.get(method)
+        if not rows:
+            continue
+        label = METHOD_LABELS.get(method, method)
+        auc_u = np.nanmean([r["auc_u"] for r in rows])
+        auc_d = np.nanmean([r["auc_d"] for r in rows])
+        spearman = np.nanmean([r["spearman"] for r in rows])
+        n_pool = np.nanmean([r["n_pool"] for r in rows])
+        auc_d_str = f"{auc_d:.3f}" if pd.notna(auc_d) else "---"
+        tex += (
+            f"{label} & {auc_u:.3f} & {auc_d_str} & "
+            f"{spearman:.3f} & {n_pool:.0f} \\\\\n"
+        )
     tex += "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
     return tex
 
+
+def build_gating_cost_table_latex(env_id, gating_cost_values):
+    if not gating_cost_values:
+        return "% No gating-cost data available\n"
+
+    tex = "\\begin{table}[htbp]\n\\centering\n"
+    tex += (
+        "\\caption{Gating cost for \\texttt{"
+        f"{env_id}"
+        "}: the real-environment sample budget each method actually spent, "
+        "so that reward comparisons can be read against equal (or unequal) cost.}\n"
+    )
+    tex += f"\\label{{tab:gating_cost_{env_id}}}\n"
+    tex += "\\begin{tabular}{lcccc}\n\\toprule\n"
+    tex += (
+        "\\textbf{Method} & $\\boldsymbol{\\rho}$ \\textbf{(final)} & "
+        "\\textbf{Real evals/gen} & \\textbf{Generations} & "
+        "\\textbf{Surrogate ratio} \\\\\n\\midrule\n"
+    )
+    for method in SC_ERL_VARIANTS + ["erl"]:
+        rows = gating_cost_values.get(method)
+        if not rows:
+            continue
+        label = METHOD_LABELS.get(method, method)
+        rho_final = np.nanmean([r["rho_final"] for r in rows])
+        real_evals = np.nanmean([r["real_evals_gen"] for r in rows])
+        gens = np.nanmean([r["generations"] for r in rows])
+        ratio = np.nanmean([r["surrogate_ratio"] for r in rows])
+
+        rho_str = f"{rho_final:.3f}" if pd.notna(rho_final) else "---"
+        evals_str = f"{real_evals:.1f}" if pd.notna(real_evals) else "---"
+        gens_str = f"{gens:.0f}" if pd.notna(gens) else "---"
+        ratio_str = f"{ratio:.3f}" if pd.notna(ratio) else "---"
+
+        tex += f"{label} & {rho_str} & {evals_str} & {gens_str} & {ratio_str} \\\\\n"
+    tex += "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
+    return tex
 
 
 # Critical values q_alpha for Nemenyi test, alpha=0.05 (two-tailed)
@@ -985,8 +1295,8 @@ def compute_rankings_and_nemenyi(all_stable_values, environments):
         rank_lists = [[rank_matrix[m][e] for e in common_envs] for m in methods]
         try:
             _, friedman_p = stats.friedmanchisquare(*rank_lists)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 -- scipy can raise on degenerate rank data; leave friedman_p as None
+            print(f"    Warning: Friedman test failed: {e}")
         k, N = len(methods), len(common_envs)
         q = (
             _NEMENYI_Q.get(k)
@@ -1073,7 +1383,7 @@ def generate_nemenyi_cd_plot(avg_ranks, cd, out_path):
 
     sorted_methods = sorted(present, key=present.__getitem__)
     n = len(sorted_methods)
-    fig, ax = plt.subplots(figsize=(8, max(2.5, 0.55 * n) + 1.2))
+    _fig, ax = plt.subplots(figsize=(8, max(2.5, 0.55 * n) + 1.2))
 
     y_pos = {m: i for i, m in enumerate(sorted_methods)}
     best_r = present[sorted_methods[0]]
@@ -1094,7 +1404,7 @@ def generate_nemenyi_cd_plot(avg_ranks, cd, out_path):
             "",
             xy=(best_r + cd, y_top),
             xytext=(best_r, y_top),
-            arrowprops=dict(arrowstyle="<->", color="black", lw=1.5),
+            arrowprops={"arrowstyle": "<->", "color": "black", "lw": 1.5},
         )
         ax.text(
             best_r + cd / 2,
@@ -1179,25 +1489,37 @@ def generate_auc_bar_chart(all_merged_data, environments, out_path):
                     step_grid = np.linspace(0, cutoff, 500)
                     aucs = []
                     if method in merged_data:
-                        for seed, df in merged_data[method].items():
+                        for df in merged_data[method].values():
                             curve = _interpolate_seed_to_grid(df, step_grid)
                             if curve is not None:
                                 span = step_grid[-1] - step_grid[0]
-                                aucs.append(float(np.trapezoid(curve, step_grid) / span))
+                                aucs.append(
+                                    float(np.trapezoid(curve, step_grid) / span)
+                                )
                     mean_auc = float(np.mean(aucs)) if aucs else np.nan
                     std_auc = float(np.std(aucs)) if len(aucs) > 1 else 0.0
 
                     x = group_pos[b_idx] - group_width / 2 + (m_idx + 0.5) * bar_w
                     ax.bar(
-                        x, mean_auc if not np.isnan(mean_auc) else 0,
+                        x,
+                        mean_auc if not np.isnan(mean_auc) else 0,
                         width=bar_w * 0.92,
-                        color=color, alpha=BUDGET_ALPHAS[b_idx],
+                        color=color,
+                        alpha=BUDGET_ALPHAS[b_idx],
                         edgecolor="none",
                         label=label if b_idx == 0 else None,
                     )
                     if not np.isnan(mean_auc) and std_auc > 0:
-                        ax.errorbar(x, mean_auc, yerr=std_auc, fmt="none",
-                                    ecolor="#333333", elinewidth=0.8, capsize=2, capthick=0.8)
+                        ax.errorbar(
+                            x,
+                            mean_auc,
+                            yerr=std_auc,
+                            fmt="none",
+                            ecolor="#333333",
+                            elinewidth=0.8,
+                            capsize=2,
+                            capthick=0.8,
+                        )
 
             ax.set_xticks(group_pos)
             ax.set_xticklabels(BUDGET_LABELS)
@@ -1213,19 +1535,30 @@ def generate_auc_bar_chart(all_merged_data, environments, out_path):
         # x-axis group labels (200k / 500k / 1M) and alpha shading
         handles, labels = axes[0].get_legend_handles_labels()
         alpha_handles = [
-            Patch(facecolor="#888888", alpha=BUDGET_ALPHAS[i], edgecolor="none",
-                  label=BUDGET_LABELS[i])
+            Patch(
+                facecolor="#888888",
+                alpha=BUDGET_ALPHAS[i],
+                edgecolor="none",
+                label=BUDGET_LABELS[i],
+            )
             for i in range(n_budgets)
         ]
         fig.legend(
-            handles + alpha_handles, labels + BUDGET_LABELS,
-            loc="lower center", ncol=n_methods + n_budgets,
-            frameon=True, framealpha=0.9, edgecolor="#cccccc",
-            fontsize=7.5, bbox_to_anchor=(0.5, -0.22),
+            handles + alpha_handles,
+            labels + BUDGET_LABELS,
+            loc="lower center",
+            ncol=n_methods + n_budgets,
+            frameon=True,
+            framealpha=0.9,
+            edgecolor="#cccccc",
+            fontsize=7.5,
+            bbox_to_anchor=(0.5, -0.22),
         )
         plt.suptitle(
             "Normalized Area Under Reward Curve at Three Step Budgets",
-            fontsize=13, fontweight="bold", y=1.01,
+            fontsize=13,
+            fontweight="bold",
+            y=1.01,
         )
         plt.tight_layout()
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -1262,8 +1595,14 @@ def generate_relative_improvement_plot(all_merged_data, environments, out_path):
             denom_floor = float(np.percentile(pos_vals, 70)) if len(pos_vals) else 1.0
             denom = np.maximum(erl_abs, denom_floor)
 
-            ax.axhline(0, color="#444444", linestyle="--", linewidth=1.0,
-                       zorder=3, label="ERL (reference)")
+            ax.axhline(
+                0,
+                color="#444444",
+                linestyle="--",
+                linewidth=1.0,
+                zorder=3,
+                label="ERL (reference)",
+            )
 
             all_mean_rels = []
             plot_items = []
@@ -1294,16 +1633,31 @@ def generate_relative_improvement_plot(all_merged_data, environments, out_path):
                 color = METHOD_COLORS.get(method, "#333333")
                 label = METHOD_LABELS.get(method, method)
                 is_proposed = method in PROPOSED_METHODS
-                ax.plot(step_grid, mean_rel, color=color, linewidth=1.8 if is_proposed else 1.2,
-                        linestyle="-" if is_proposed else "--", label=label, zorder=4)
-                ax.fill_between(step_grid, mean_rel - std_rel, mean_rel + std_rel,
-                                color=color, alpha=0.12, zorder=2)
+                ax.plot(
+                    step_grid,
+                    mean_rel,
+                    color=color,
+                    linewidth=1.8 if is_proposed else 1.2,
+                    linestyle="-" if is_proposed else "--",
+                    label=label,
+                    zorder=4,
+                )
+                ax.fill_between(
+                    step_grid,
+                    mean_rel - std_rel,
+                    mean_rel + std_rel,
+                    color=color,
+                    alpha=0.12,
+                    zorder=2,
+                )
 
             ax.set_title(display_env_id(env_id), fontweight="bold")
             ax.set_xlabel("Interaction Steps")
             ax.set_ylabel("Relative Improvement over ERL")
             ax.xaxis.set_major_formatter(
-                plt.FuncFormatter(lambda x, _: f"{x/1e6:.1f}M" if x >= 1e6 else f"{x/1e3:.0f}k")
+                plt.FuncFormatter(
+                    lambda x, _: f"{x / 1e6:.1f}M" if x >= 1e6 else f"{x / 1e3:.0f}k"
+                )
             )
             ax.set_xlim(0, cap)
             ax.grid(color="#eeeeee", linestyle="-", linewidth=0.5, zorder=0)
@@ -1315,11 +1669,23 @@ def generate_relative_improvement_plot(all_merged_data, environments, out_path):
             handles, labels = ax.get_legend_handles_labels()
             if handles:
                 break
-        fig.legend(handles, labels, loc="lower center", ncol=len(SC_ERL_VARIANTS) + 1,
-                   frameon=True, framealpha=0.9, edgecolor="#cccccc",
-                   fontsize=8.5, bbox_to_anchor=(0.5, -0.22))
-        plt.suptitle("Relative Improvement over ERL Baseline",
-                     fontsize=13, fontweight="bold", y=1.01)
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=len(SC_ERL_VARIANTS) + 1,
+            frameon=True,
+            framealpha=0.9,
+            edgecolor="#cccccc",
+            fontsize=8.5,
+            bbox_to_anchor=(0.5, -0.22),
+        )
+        plt.suptitle(
+            "Relative Improvement over ERL Baseline",
+            fontsize=13,
+            fontweight="bold",
+            y=1.01,
+        )
         plt.tight_layout()
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
         plt.close()
@@ -1342,7 +1708,7 @@ def _build_group_section(
         try:
             generate_nemenyi_cd_plot(avg_ranks, cd, cd_path)
             has_cd = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(f"Warning: CD diagram [{group_label}]: {e}")
             has_cd = False
 
@@ -1364,7 +1730,7 @@ def _build_group_section(
         try:
             generate_auc_bar_chart(md_subset, group_envs, auc_path)
             has_auc = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(f"Warning: AUC chart [{group_label}]: {e}")
             has_auc = False
 
@@ -1372,7 +1738,7 @@ def _build_group_section(
         try:
             generate_relative_improvement_plot(md_subset, group_envs, rel_path)
             has_rel = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(f"Warning: Relative improvement [{group_label}]: {e}")
             has_rel = False
 
@@ -1435,8 +1801,8 @@ def main():
         "\\begin{document}\n\\maketitle\n\\tableofcontents\n\\newpage\n"
     )
 
-    all_stable_values = {}   # env_id -> {method -> [final vals]}
-    all_merged_data = {}     # env_id -> merged_data (kept for cross-env plots)
+    all_stable_values = {}  # env_id -> {method -> [final vals]}
+    all_merged_data = {}  # env_id -> merged_data (kept for cross-env plots)
 
     for env_id in environments:
         print(f"Processing environment: {env_id}...")
@@ -1445,54 +1811,75 @@ def main():
         stable_values = get_stable_final_values(merged_data)
         all_stable_values[env_id] = stable_values
 
+        gate_quality_values = get_gate_quality_values(merged_data)
+        gating_cost_values = get_gating_cost_values(env_id, merged_data, base_dir)
+
         se_path = os.path.join(output_dir, f"{env_id}_sample_efficiency.png")
-        sa_path = os.path.join(output_dir, f"{env_id}_surrogate_analysis.png")
-        cc_path = os.path.join(output_dir, f"{env_id}_critic_correlation.png")
+        gd_path = os.path.join(output_dir, f"{env_id}_gate_dynamics.png")
+        gs_path = os.path.join(output_dir, f"{env_id}_gate_scatter.png")
+        bu_path = os.path.join(output_dir, f"{env_id}_behavioral_uncertainty.png")
         spd_path = os.path.join(output_dir, f"{env_id}_speedup.png")
         rat_path = os.path.join(output_dir, f"{env_id}_ratio.png")
+        sc_path = os.path.join(output_dir, f"{env_id}_raw_sigma_cv.png")
 
         # Generowanie wykresów otoczone blokami try-except dla bezpieczeństwa .tex
         try:
             generate_sample_efficiency_plot(env_id, merged_data, se_path)
             has_se = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(
                 f"Warning: Could not generate sample efficiency plot for {env_id}: {e}"
             )
             has_se = False
 
         try:
-            generate_surrogate_analysis_plot(env_id, merged_data, sa_path)
-            has_sa = True
-        except Exception as e:
-            print(
-                f"Warning: Could not generate surrogate analysis plot for {env_id}: {e}"
-            )
-            has_sa = False
+            generate_gate_dynamics_plot(env_id, merged_data, gd_path)
+            has_gd = True
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
+            print(f"Warning: Could not generate gate dynamics plot for {env_id}: {e}")
+            has_gd = False
 
         try:
-            corr_results = generate_critic_correlation_plot(env_id, base_dir, cc_path)
-        except Exception as e:
+            generate_gate_scatter_plot(env_id, merged_data, gs_path)
+            has_gs = True
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
+            print(f"Warning: Could not generate gate scatter plot for {env_id}: {e}")
+            has_gs = False
+
+        try:
+            generate_behavioral_uncertainty_scatter_plot(env_id, merged_data, bu_path)
+            has_bu = True
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(
-                f"Warning: Could not generate critic correlation plot for {env_id}: {e}"
+                f"Warning: Could not generate behavioral/uncertainty scatter plot "
+                f"for {env_id}: {e}"
             )
-            corr_results = None
+            has_bu = False
 
         try:
             generate_speedup_plot(env_id, merged_data, spd_path)
             has_spd = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(f"Warning: Could not generate speedup plot for {env_id}: {e}")
             has_spd = False
 
         try:
             generate_ratio_plot(env_id, merged_data, rat_path)
             has_rat = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(f"Warning: Could not generate ratio plot for {env_id}: {e}")
             has_rat = False
 
-        latex_document += f"\\section{{Environment Results: \\texttt{{{display_env_id(env_id)}}}}}\n"
+        try:
+            generate_raw_sigma_cv_plot(env_id, merged_data, sc_path)
+            has_sc = True
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
+            print(f"Warning: Could not generate raw sigma CV plot for {env_id}: {e}")
+            has_sc = False
+
+        latex_document += (
+            f"\\section{{Environment Results: \\texttt{{{display_env_id(env_id)}}}}}\n"
+        )
 
         if has_se:
             latex_document += (
@@ -1508,26 +1895,43 @@ def main():
 
         latex_document += build_summary_table_latex(env_id, base_dir)
         latex_document += build_significance_table_latex(env_id, stable_values)
+        latex_document += build_gate_quality_table_latex(env_id, gate_quality_values)
+        latex_document += build_gating_cost_table_latex(env_id, gating_cost_values)
 
-        if corr_results:
-            latex_document += build_correlation_table_latex(env_id, corr_results)
+        if has_gd:
             latex_document += (
                 f"\\begin{{figure}}[H]\n\\centering\n"
                 f"  \\includegraphics[width=0.95\\textwidth]{{{
-                    os.path.basename(cc_path)
+                    os.path.basename(gd_path)
                 }}}\n"
-                f"  \\caption{{Scatter plots mapping surrogate epistemic uncertainty against critic TD loss values.}}\n"
+                f"  \\caption{{Gate controller dynamics on {env_id}: adaptive gated fraction "
+                f"$\\rho$ against the windowed surrogate error $\\hat{{e}}$, showing the "
+                f"controller reacting to its own error estimate.}}\n"
+                f"\\end{{figure}}\n\n"
+            )
+
+        if has_gs:
+            latex_document += (
+                f"\\begin{{figure}}[H]\n\\centering\n"
+                f"  \\includegraphics[width=0.95\\textwidth]{{{
+                    os.path.basename(gs_path)
+                }}}\n"
+                f"  \\caption{{Mean uncertainty vs. surrogate error on {env_id}, "
+                f"aggregated per generation over the full run.}}\n"
                 f"\\end{{figure}}\n"
             )
 
-        if has_sa:
+        if has_bu:
             latex_document += (
                 f"\\begin{{figure}}[H]\n\\centering\n"
-                f"  \\includegraphics[width=0.85\\textwidth]{{{
-                    os.path.basename(sa_path)
+                f"  \\includegraphics[width=0.95\\textwidth]{{{
+                    os.path.basename(bu_path)
                 }}}\n"
-                f"  \\caption{{Surrogate controller uncertainty trends compared to average population fitness across generations.}}\n"
-                f"\\end{{figure}}\n"
+                f"  \\caption{{Mean epistemic uncertainty of the population policies "
+                f"$\\pi_j$ vs. their mean behavioural distance from the RL actor on "
+                f"{env_id}, aggregated per generation over the full run "
+                f"(Pearson $r$, scipy).}}\n"
+                f"\\end{{figure}}\n\n"
             )
 
         if has_spd:
@@ -1550,51 +1954,95 @@ def main():
                     os.path.basename(rat_path)
                 }}}\n"
                 f"  \\caption{{Surrogate utilization dynamics on {env_id}. "
-                f"Uncertainty-driven methods (Ensemble, Dropout, Evidential) exhibit epistemic breathing --- "
-                f"deep drops in surrogate ratio coincide with high-uncertainty discovery phases, "
-                f"whereas SC-ERL Random maintains a flat, uninformed utilization profile.}}\n"
+                f"Dotted vertical lines mark generations where a seed's recorded history ends; "
+                f"steps in the mean curve beyond that point are an interpolation artefact from "
+                f"fewer contributing seeds, not a real change in utilization.}}\n"
+                f"\\end{{figure}}\n\n"
+            )
+
+        if has_sc:
+            latex_document += (
+                f"\\begin{{figure}}[H]\n\\centering\n"
+                f"  \\includegraphics[width=0.85\\textwidth]{{{
+                    os.path.basename(sc_path)
+                }}}\n"
+                f"  \\caption{{Raw ensemble disagreement, coefficient of variation "
+                f"across the population ($\\sigma$/mean of \\texttt{{raw\\_sigma}}) on "
+                f"{env_id}. Explains why the fixed MAD-based threshold "
+                f"(\\texttt{{gate\\_mode=relative}}) failed to separate individuals: "
+                f"population spread stays in the 0.5--1\\% range.}}\n"
                 f"\\end{{figure}}\n\n"
             )
 
         latex_document += "\\newpage\n"
 
     # ---- Per-benchmark Nemenyi + cross-env plots ----
-    mujoco_envs = [e for e in environments if not e.startswith("dm_control_")]
+    mujoco_envs = [
+        e
+        for e in environments
+        if not e.startswith("dm_control_") and not e.lower().startswith("myo")
+    ]
     dmc_envs = [e for e in environments if e.startswith("dm_control_")]
+    myo_envs = [e for e in environments if e.lower().startswith("myo")]
 
     if mujoco_envs:
         print(f"\nBuilding MuJoCo ranking section ({len(mujoco_envs)} envs)...")
         latex_document += _build_group_section(
-            "MuJoCo Environments", "mujoco",
-            mujoco_envs, all_merged_data, all_stable_values, output_dir,
+            "MuJoCo Environments",
+            "mujoco",
+            mujoco_envs,
+            all_merged_data,
+            all_stable_values,
+            output_dir,
         )
 
     if dmc_envs:
         print(f"\nBuilding DMC ranking section ({len(dmc_envs)} envs)...")
         latex_document += _build_group_section(
-            "DMC Dog Environments", "dmc",
-            dmc_envs, all_merged_data, all_stable_values, output_dir,
+            "DMC Dog Environments",
+            "dmc",
+            dmc_envs,
+            all_merged_data,
+            all_stable_values,
+            output_dir,
+        )
+
+    if myo_envs:
+        print(f"\nBuilding MyoSuite ranking section ({len(myo_envs)} envs)...")
+        latex_document += _build_group_section(
+            "MyoSuite Environments",
+            "myosuite",
+            myo_envs,
+            all_merged_data,
+            all_stable_values,
+            output_dir,
         )
 
     # ---- Combined Nemenyi over all environments ----
     if len(environments) >= 2:
         print("\nComputing combined (all-environment) Nemenyi ranking...")
-        _, avg_ranks, cd, _ = compute_rankings_and_nemenyi(all_stable_values, environments)
+        _, avg_ranks, cd, _ = compute_rankings_and_nemenyi(
+            all_stable_values, environments
+        )
         cd_path = os.path.join(output_dir, "nemenyi_cd_diagram_all.png")
         try:
             generate_nemenyi_cd_plot(avg_ranks, cd, cd_path)
             has_cd = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort report generation: skip this plot/table on failure, keep the rest
             print(f"Warning: Could not generate combined CD diagram: {e}")
             has_cd = False
 
-        latex_document += "\\section{Global Ranking Analysis — All Environments (Nemenyi)}\n"
-        latex_document += build_nemenyi_ranking_table_latex(all_stable_values, environments)
+        latex_document += (
+            "\\section{Global Ranking Analysis — All Environments (Nemenyi)}\n"
+        )
+        latex_document += build_nemenyi_ranking_table_latex(
+            all_stable_values, environments
+        )
         if has_cd:
             latex_document += (
                 "\\begin{figure}[H]\n\\centering\n"
                 f"  \\includegraphics[width=0.72\\textwidth]{{{os.path.basename(cd_path)}}}\n"
-                "  \\caption{Critical Difference diagram across all environments (MuJoCo + DMC). "
+                "  \\caption{Critical Difference diagram across all environments (MuJoCo + DMC + MyoSuite). "
                 "Methods connected by the grey bar are not significantly different "
                 "from the best-ranked method at $\\alpha = 0.05$.}\n"
                 "\\end{figure}\n"

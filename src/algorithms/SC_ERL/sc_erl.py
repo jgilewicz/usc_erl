@@ -8,6 +8,7 @@ import torch
 from common.reply_buffer import Buffer
 from common.surrogate_controller import SurrogateController, SurrogateMode
 from common.utils import (
+    behavioural_distance,
     build_surrogate_metrics,
     evaluate_policy,
     print_sc_erl_debug_summary,
@@ -246,6 +247,8 @@ def SC_ERL(
                 total_steps=total_steps,
                 warmup_steps=warmup_steps,
                 mutation_fraction=mutation_fraction,
+                actor=actor,
+                action_limit=action_limit,
             )
         )
         elite_indices = surrogate_controller.last_elite_indices
@@ -366,6 +369,33 @@ def SC_ERL(
             )
             next_checkpoint_idx += 1
 
+        behavioural_distances: list[float] = []
+        if population and len(replay_buffer) > 0:
+            if surrogate_controller.last_obs_batch is not None:
+                distance_obs = torch.as_tensor(
+                    surrogate_controller.last_obs_batch,
+                    dtype=torch.float32,
+                    device=device,
+                )
+            else:
+                distance_obs = replay_buffer.sample(
+                    batch_size=min(k, len(replay_buffer))
+                )["state"].to(device)
+
+            behavioural_distances = [
+                behavioural_distance(policy, actor, distance_obs, action_limit)
+                for policy in population
+            ]
+
+        behavioral_distance_mean = (
+            float(np.mean(behavioural_distances)) if behavioural_distances else 0.0
+        )
+        d_cv = (
+            float(np.std(behavioural_distances)) / behavioral_distance_mean
+            if behavioural_distances and behavioral_distance_mean > 1e-12
+            else 0.0
+        )
+
         if used_real_eval and generation % rl_injection_interval == 0:
             evolution_module.sync_rl_to_pop(
                 actor, population, fitnesses, elite_indices, unselect_indices
@@ -427,6 +457,9 @@ def SC_ERL(
                 "actor_loss": actor_loss,
                 "critic_loss": critic_loss,
                 "surrogate_used": surrogate_controller.mode == "surrogate",
+                "n_real": surrogate_controller.last_n_real,
+                "behavioral_distance_mean": behavioral_distance_mean,
+                "d_cv": d_cv,
             }
             metrics.update(
                 build_surrogate_metrics(
