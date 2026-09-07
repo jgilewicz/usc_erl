@@ -83,7 +83,7 @@ class Buffer:
             "done": self.done[indices],
         }
 
-    def sample_latest(self, batch_size: int = None) -> dict[str, torch.Tensor]:
+    def sample_latest(self, batch_size: int | None = None) -> dict[str, torch.Tensor]:
         return self.sample(batch_size=batch_size, latest=True)
 
     def __len__(self) -> int:

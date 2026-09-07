@@ -1,6 +1,6 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class Actor(nn.Module):
@@ -13,7 +13,7 @@ class Actor(nn.Module):
         activation: str = "relu",
         use_ln: bool = True,
     ):
-        super(Actor, self).__init__()
+        super().__init__()
 
         self.action_limit = action_limit
         act_layer = nn.Tanh() if activation.lower() == "tanh" else nn.ReLU()
@@ -45,10 +45,11 @@ class Critic(nn.Module):
         action_dim: int,
         dropout: float = 0.0,
         activation: str = "relu",
-        hidden_dims: list[int] = [400, 300],
+        hidden_dims: list[int] | None = None,
     ) -> None:
-        super(Critic, self).__init__()
+        super().__init__()
 
+        hidden_dims = hidden_dims if hidden_dims is not None else [400, 300]
         act_layer = nn.ELU() if activation.lower() == "elu" else nn.ReLU()
         dim1, dim2 = hidden_dims[0], hidden_dims[1]
 
@@ -80,7 +81,7 @@ class EvidentialModule(nn.Module):
     _EPS: float = 1e-4
 
     def __init__(self, in_features: int, units: int = 1):
-        super(EvidentialModule, self).__init__()
+        super().__init__()
         self.units = units
         self.dense = nn.Linear(in_features, 4 * self.units)
 
@@ -105,9 +106,10 @@ class EvidentialCritic(nn.Module):
         self,
         state_dim: int,
         action_dim: int,
-        hidden_dims: list[int] = [400, 300],
+        hidden_dims: list[int] | None = None,
     ) -> None:
-        super(EvidentialCritic, self).__init__()
+        super().__init__()
+        hidden_dims = hidden_dims if hidden_dims is not None else [400, 300]
         dim1, dim2 = hidden_dims[0], hidden_dims[1]
 
         self.state_net = nn.Sequential(

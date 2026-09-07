@@ -17,6 +17,16 @@
 #   TARGET_ENV=dm_control/dog-fetch-v0 sbatch --array=0-49 slurm_run_array.sh
 #   (SC-ERL only: --array=0-19; baselines only: --array=20-49)
 #
+# MyoSuite (10 algos × 5 seeds = 50 tasks). Uses a separate venv (.venv-myosuite —
+# see README "Dependency Extras") since myosuite pins mujoco<3.7/gymnasium<1.3,
+# incompatible with the mujoco/DMC venv above. Build it once per cluster checkout:
+#   UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite
+#   TARGET_ENV=myoElbowPose1D6MRandom-v0 sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=myoHandReachRandom-v0     sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=myoHandPenTwirlRandom-v0  sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=myoHandObjHoldRandom-v0   sbatch --array=0-49 slurm_run_array.sh
+#   TARGET_ENV=myoLegWalk-v0             sbatch --array=0-49 slurm_run_array.sh
+#
 # Optional overrides:
 #   N_STEPS   Training steps per run (default: 1000000)
 
@@ -38,9 +48,15 @@ N_STEPS="${N_STEPS:-1000000}"
 if [[ "$ENV" == dm_control/* || "$ENV" == fancy/* || "$ENV" == metaworld/* ]]; then
   BACKEND="fancy_gym"
   ENV_TAG="DMC"
+  VENV_DIR=".venv"
+elif [[ "$ENV" == myo* ]]; then
+  BACKEND="myosuite"
+  ENV_TAG="MyoSuite"
+  VENV_DIR=".venv-myosuite"
 else
   BACKEND="mujoco"
   ENV_TAG="MuJoCo"
+  VENV_DIR=".venv"
 fi
 
 ALGORITHMS=(
@@ -91,17 +107,19 @@ cd "${PROJECT_DIR}" || {
   exit 1
 }
 
-if [ -d ".venv" ]; then
-  source .venv/bin/activate
+if [ -d "${VENV_DIR}" ]; then
+  source "${VENV_DIR}/bin/activate"
 else
-  echo "ERROR: .venv directory does not exist! Please build the environment."
+  echo "ERROR: ${VENV_DIR} directory does not exist! Please build the environment."
+  echo "  mujoco/DMC: uv sync --extra mujoco-envs"
+  echo "  MyoSuite:   UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite"
   exit 1
 fi
 
 export WANDB_API_KEY="INSERT_YOUR_WANDB_API_KEY_HERE"
 export WANDB_MODE="offline"
 export WANDB_DIR="${PROJECT_DIR}/wandb_logs"
-export LD_LIBRARY_PATH="${PROJECT_DIR}/.venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${PROJECT_DIR}/${VENV_DIR}/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH:-}"
 mkdir -p logs "${WANDB_DIR}"
 
 # Build optional args as arrays to avoid empty-string pitfalls
@@ -110,6 +128,7 @@ SURROGATE_ARGS=()
 
 BACKEND_ARGS=()
 [[ "$BACKEND" == "fancy_gym" ]] && BACKEND_ARGS=("env.backend=fancy_gym" "eval_env.backend=fancy_gym")
+[[ "$BACKEND" == "myosuite" ]] && BACKEND_ARGS=("env.backend=myosuite" "eval_env.backend=myosuite")
 
 python entry_point.py \
   algorithm="${ALGO}" \

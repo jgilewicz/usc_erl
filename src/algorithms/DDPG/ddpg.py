@@ -1,12 +1,13 @@
+import gymnasium as gym
 import numpy as np
 import torch
-import gymnasium as gym
-
 from stable_baselines3 import DDPG as _SB3_DDPG
 from stable_baselines3.common.noise import NormalActionNoise
 
 from common.sb3_callback import EvalAndLogCallback
 from common.wandb_logger import WandbLogger
+
+_CPU_DEVICE = torch.device("cpu")
 
 
 def DDPG(
@@ -14,7 +15,7 @@ def DDPG(
     eval_env: gym.Env,
     n_steps: int,
     batch_size: int = 256,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device = _CPU_DEVICE,
     gamma: float = 0.99,
     tau: float = 0.005,
     learning_rate: float = 3e-4,

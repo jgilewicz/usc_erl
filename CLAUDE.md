@@ -14,6 +14,7 @@ Both `sc_erl` and `erl` are updated exclusively via TD3 gradient steps (twin cri
 Environments:
 - **MuJoCo v5**: `HalfCheetah-v5`, `Hopper-v5`, `Walker2d-v5`, `Ant-v5`, `Swimmer-v5`.
 - **DMC via fancy_gym**: `dm_control/dog-{stand,walk,trot,run,fetch}-v0`.
+- **MyoSuite**: `myoElbowPose1D6MRandom-v0`, `myoHandReachRandom-v0`, `myoHandPenTwirlRandom-v0`, `myoHandObjHoldRandom-v0`, `myoLegWalk-v0`. Runs from a separate `.venv-myosuite` directory (`task run-myo`) — see [Dependency Extras](#dependency-extras-mujoco-envs-vs-myosuite) below.
 
 ---
 
@@ -94,9 +95,13 @@ After mutation, weights are clamped to `[-1e6, 1e6]`.
 
 `f_LCB(πᵢ) = μ_Q(πᵢ) − β · σ_Q(πᵢ)`
 
-Gating decision: if `σ_Q > percentile_threshold(ω)` OR random ε-coin flip (ε=0.10) → real rollout. Otherwise → accept surrogate fitness.
+Gating decision is controlled by `surrogate.gate_mode`:
+- `topk` (default) — real-evaluate the `rho` fraction of the population with the highest predicted uncertainty (`SurrogateController._gate_mask`), plus a random ε-coin-flip (ε=0.10) on the rest for unbiased exploration. `rho` adapts via `_update_rho` toward a target normalized surrogate error `e_star`, using `e_hat` pooled over `e_hat_window` generations (`_surrogate_error`, computed only from the ε-selected individuals, since they're the only unbiased sample of surrogate-vs-real error).
+- `relative` — the original per-individual gate: if `σ_Q > percentile_threshold(mad_k)` OR the ε-coin-flip fires → real rollout, otherwise accept the surrogate fitness. Kept as an ablation baseline against `topk`.
 
-Q-values are normalized via EMA running bounds before LCB (EMA factor α=0.05), then tanh-clipped to `[-1, 1]`.
+Q-values are normalized via EMA running bounds before LCB (EMA factor α=0.05), then squashed to `[-1, 1]` via `surrogate.fitness_norm`: `tanh` (default, squeezes both tails toward the center) or `clip` (hard clip, no compression).
+
+`SurrogateController` also records per-state uncertainty each generation (`last_per_state_mu`/`last_per_state_sigma`, shape `(n_pop, k)`, and `last_obs_batch`, shape `(k, state_dim)`) alongside the scalar `last_uncertainty`; under `debug=true` it asserts the two are consistent.
 
 ---
 
@@ -126,14 +131,37 @@ Critic type is still chosen by `surrogate.mode` for SC-ERL (unaffected by the TD
 task run ALGO=sc_erl CLI_ARGS="env.id=HalfCheetah-v5 surrogate.mode=ensemble"
 task run ALGO=sac CLI_ARGS="env.id=HalfCheetah-v5"
 task run ALGO=crossq CLI_ARGS="env.id=HalfCheetah-v5"
-task run-parallel                    # Full matrix: 10 algos × 5 MuJoCo envs × 5 seeds
-task run-dmc ENV=dm_control/dog-stand-v0 MODE=ensemble SEED=0  # Single DMC run
-task run-parallel-dmc                # Full matrix: SC-ERL × 5 DMC dog envs × 4 modes × 5 seeds
+task run-myo ALGO=sc_erl ENV=myoHandReachRandom-v0   # MyoSuite env, separate extra
 task report                          # Compile metrics, stats, PDF
 task clean                           # Wipe outputs/, results/, wandb/
 ```
 
-All runs use `uv run python entry_point.py`. Do not invoke `entry_point.py` directly without `uv run` unless the venv is already activated.
+`task run` uses `uv run --extra mujoco-envs python entry_point.py` (MuJoCo v5 + DMC/fancy_gym),
+against the normal `.venv`. `task run-myo` runs against a **separate** `.venv-myosuite` — see
+[Dependency Extras](#dependency-extras-mujoco-envs-vs-myosuite).
+Do not invoke `entry_point.py` directly without `uv run` unless the correct venv is already active.
+
+## Dependency Extras: `mujoco-envs` vs `myosuite`
+
+MyoSuite (`myosuite<=2.12.2`) pins `mujoco<3.7` and `gymnasium<1.3`, which is incompatible
+with the `mujoco>=3.10.0` / `gymnasium>=1.3.0` / `dm-control>=1.0.20` stack used for MuJoCo v5
+and DMC envs. These live in two mutually-exclusive `uv` optional-dependency groups declared
+in `pyproject.toml` (`[tool.uv] conflicts`), so they cannot resolve into one environment:
+
+- `mujoco-envs` — `dm-control`, `gymnasium[mujoco]>=1.3.0`, `mujoco>=3.10.0`. Installed in `.venv`.
+- `myosuite` — `myosuite`, `gymnasium[mujoco]<1.3`, `mujoco>=3.6,<3.7`. Installed in `.venv-myosuite`.
+
+MyoSuite therefore lives in a **separate on-disk venv directory**, not a swap of `.venv` — this
+matters on SLURM where mujoco/DMC and MyoSuite array jobs can run concurrently on the same shared
+filesystem; swapping one `.venv` in place would race. Build/update it via:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite
+```
+
+`task run-myo` does this automatically before each run (`env: {UV_PROJECT_ENVIRONMENT: .venv-myosuite}`
++ `uv sync --extra myosuite` + `uv run --no-sync`). Bare `uv sync` (no extra) installs neither
+`mujoco-envs` nor `myosuite` — always pass `--extra mujoco-envs` for the default `.venv`.
 
 ---
 
@@ -153,8 +181,10 @@ All runs use `uv run python entry_point.py`. Do not invoke `entry_point.py` dire
 - The `plots_and_tests/` pipeline reads from WandB; ensure runs are logged before generating reports.
 - `outputs/` and `results/` are gitignored; never commit experiment artifacts.
 - **fancy_gym backend**: `make_env()` in `entry_point.py` auto-detects DMC/fancy envs by `dm_control/`, `fancy/`, or `metaworld/` prefix and imports `fancy_gym` lazily. Set `env.backend=fancy_gym` explicitly to force it. Dog env-specific configs already set this.
-- **DMC config naming**: env-specific configs for DMC follow the sanitized slug convention — `dm_control/dog-stand-v0` → `sc_erl_dm_control_dog-stand-v0.yaml`.
-- **SLURM**: single `slurm_run_array.sh` handles both backends. Backend and algo matrix auto-detected from `TARGET_ENV` prefix (`dm_control/` → fancy_gym + 4 SC-ERL modes, 20 tasks; otherwise → MuJoCo + 10 algos, 50 tasks). Pass `--array=0-19` for DMC, `--array=0-49` for MuJoCo.
+- **myosuite backend**: `make_env()` auto-detects MyoSuite envs by the `myo` prefix (all MyoSuite env IDs start with it) and lazily imports `myosuite` to register them. Set `env.backend=myosuite` explicitly to force it. Requires running from `.venv-myosuite` (`task run-myo`, or `UV_PROJECT_ENVIRONMENT=.venv-myosuite uv run ...`) — see [Dependency Extras](#dependency-extras-mujoco-envs-vs-myosuite).
+- **SLURM MyoSuite jobs**: `slurm_run_array.sh` detects the `myo` prefix, sets `BACKEND=myosuite`, and activates `.venv-myosuite` instead of `.venv` — build it once per checkout with `UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite` before submitting.
+- **DMC config naming**: env-specific configs for DMC follow the sanitized slug convention — `dm_control/dog-stand-v0` → `sc_erl_dm_control_dog-stand-v0.yaml`. MyoSuite env configs follow the same pattern (e.g. `sc_erl_myoHandReachRandom-v0.yaml`), currently added only under `configs/algorithm/sc_erl/` (matching the existing DMC precedent) and setting only `env.id`/`env.backend` — no tuned surrogate/evolution hyperparameters exist yet for these envs.
+- **SLURM**: single `slurm_run_array.sh` handles all three backends. Backend, venv dir, and algo matrix auto-detected from `TARGET_ENV` prefix (`dm_control/`/`fancy/`/`metaworld/` → fancy_gym + 4 SC-ERL modes, 20 tasks, `.venv`; `myo` → myosuite + 10 algos, 50 tasks, `.venv-myosuite`; otherwise → MuJoCo + 10 algos, 50 tasks, `.venv`). Pass `--array=0-19` for DMC, `--array=0-49` for MuJoCo/MyoSuite.
 - **SAC** wraps SB3 `SAC` (PyTorch). Shares `cfg.device` normally. No extra setup.
 - **CrossQ** wraps `sb3_contrib.CrossQ` (PyTorch). Accepts `device` directly; no JAX setup needed.
 - **DDPG / TD3 / PPO** are thin SB3 wrappers (`stable_baselines3.DDPG/TD3/PPO`), same pattern as SAC/CrossQ. All custom PyTorch training loops for these three were removed — DDPG/TD3 use `NormalActionNoise` for exploration; PPO uses SB3's built-in rollout buffer and GAE. All five SB3 baselines (DDPG, TD3, PPO, SAC, CrossQ) share one `EvalAndLogCallback` (`src/common/sb3_callback.py`) instead of each defining its own.

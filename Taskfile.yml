@@ -16,7 +16,17 @@ tasks:
   run:
     desc: "Run algorithm (default: erl, e.g. task run ALGO=td3)"
     cmds:
-      - uv run python entry_point.py algorithm={{.ALGO}} {{.CLI_ARGS}}
+      - uv run --extra mujoco-envs python entry_point.py algorithm={{.ALGO}} {{.CLI_ARGS}}
+
+  run-myo:
+    desc: "Run a MyoSuite env (e.g. task run-myo ALGO=sc_erl ENV=myoHandReachRandom-v0)"
+    vars:
+      ENV: myoElbowPose1D6MRandom-v0
+    env:
+      UV_PROJECT_ENVIRONMENT: .venv-myosuite
+    cmds:
+      - uv sync --extra myosuite
+      - uv run --no-sync python entry_point.py algorithm={{.ALGO}} env.id={{.ENV}} env.backend=myosuite eval_env.id={{.ENV}} eval_env.backend=myosuite {{.CLI_ARGS}}
 
   clean:
     desc: "Clean outputs, Hydra logs, training results, downloaded metrics, and compiled reports"

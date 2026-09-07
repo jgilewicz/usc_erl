@@ -1,8 +1,10 @@
-import torch
-import torch.nn as nn
 import copy
-from common.reply_buffer import Buffer
-from modules.deep_modules import Critic, Actor
+
+import numpy as np
+import torch
+from torch import nn
+
+from modules.deep_modules import Actor, Critic
 
 
 class MCDropout:
@@ -36,7 +38,7 @@ class MCDropout:
         obs: torch.Tensor,
         device: str | torch.device = "cpu",
         T: int = 20,
-    ) -> tuple[float, float]:
+    ) -> tuple[float, float, np.ndarray, np.ndarray]:
         policy = policy.to(device)
         obs = obs.to(device)
 
@@ -63,7 +65,12 @@ class MCDropout:
 
             fitness = per_sample_mean.mean().item()
             uncertainty = per_sample_std.mean().item()
-            return fitness, uncertainty
+            return (
+                fitness,
+                uncertainty,
+                per_sample_mean.cpu().numpy(),
+                per_sample_std.cpu().numpy(),
+            )
         finally:
             critic.train(critic_was_training)
             policy.train(policy_was_training)
@@ -72,15 +79,12 @@ class MCDropout:
     def fitness_evaluation_mc_dropout(
         critic: Critic,
         population: list[Actor],
-        replay_buffer: Buffer,
-        k: int,
+        obs: torch.Tensor,
         device: str | torch.device = "cpu",
         T: int = 20,
         dropout_p: float = 0.2,
-    ) -> tuple[list[float], list[float]]:
-        k = min(k, len(replay_buffer))
-        batch = replay_buffer.sample_latest(batch_size=k)
-        obs = batch["state"].to(device)
+    ) -> tuple[list[float], list[float], list[np.ndarray], list[np.ndarray]]:
+        obs = obs.to(device)
 
         dropout_critic = MCDropout.make_dropout_critic(
             critic=critic, dropout_p=dropout_p, device=device
@@ -88,12 +92,16 @@ class MCDropout:
 
         fitness = []
         uncertainty = []
+        mu_per_state = []
+        sigma_per_state = []
 
         for policy in population:
-            f, u = MCDropout._mc_dropout_fitness(
+            f, u, mu_ps, sigma_ps = MCDropout._mc_dropout_fitness(
                 dropout_critic, policy, obs, device, T=T
             )
             fitness.append(f)
             uncertainty.append(u)
+            mu_per_state.append(mu_ps)
+            sigma_per_state.append(sigma_ps)
 
-        return fitness, uncertainty
+        return fitness, uncertainty, mu_per_state, sigma_per_state
