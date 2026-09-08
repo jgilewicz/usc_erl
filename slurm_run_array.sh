@@ -37,8 +37,8 @@
 #   WANDB_PROJECT  WandB project (default: configs/config.yaml)
 #   WANDB_MODE     online | offline (default: offline). Offline runs are synced
 #                  after training; online logs live and has nothing to sync.
-#   WANDB_API_KEY  Taken from the environment when already set, else the literal
-#                  below — export it before sbatch to keep the key out of git.
+#   WANDB_API_KEY  Never set by this script. Either export it before sbatch
+#                  (which propagates it) or put it in .env next to this file.
 
 #SBATCH -N 1                            # 1 node
 #SBATCH -c 4                            # 4 CPU cores
@@ -129,7 +129,10 @@ else
   exit 1
 fi
 
-export WANDB_API_KEY="${WANDB_API_KEY:-INSERT_YOUR_WANDB_API_KEY_HERE}"
+# WANDB_API_KEY is deliberately not set here: sbatch propagates the submitting
+# environment, and WandbLogger falls back to load_dotenv() reading .env — but
+# python-dotenv will not override a variable that is already set, so exporting a
+# placeholder would silently shadow a real key from .env.
 # per-job dir so concurrent array tasks never sync each other's runs
 export WANDB_DIR="${PROJECT_DIR}/wandb_logs/${RUN_NAME}"
 export LD_LIBRARY_PATH="${PROJECT_DIR}/${VENV_DIR}/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH:-}"
