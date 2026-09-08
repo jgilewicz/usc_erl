@@ -89,9 +89,11 @@ def analyze(ckpt_path: str) -> dict:
     with torch.no_grad():
         a_rl = actor(obs)
         a_rand = torch.empty_like(a_rl).uniform_(-a_max, a_max)
-        mu_rl, sig_rl = critic(obs, a_rl)
-        mu_rand, sig_rand = critic(obs, a_rand)
+        mu_rl, _ = critic(obs, a_rl)
+        mu_rand, _ = critic(obs, a_rand)
 
+    # sigma at a_rand vs a_rl is deliberately not compared here: neither point
+    # is an OOD reference for the critic (see probe_ensemble_uncertainty.py).
     action_sensitivity = (mu_rand - mu_rl).abs().mean() / mu_rl.abs().mean()
 
     pop = [_load_actor(ck, s) for s in ck["population"]]
@@ -104,7 +106,6 @@ def analyze(ckpt_path: str) -> dict:
         "seed": ck.get("seed", -1),
         "total_steps": ck.get("total_steps", -1),
         "action_sensitivity": float(action_sensitivity),
-        "sigma_ratio_ood": float(sig_rand.mean() / sig_rl.mean()),
         "sigma_mean": float(sig.mean()),
         "sigma_cv": float(sig.std() / sig.mean()),
         "d_mean": float(d.mean()),
@@ -120,7 +121,6 @@ def _print_table(rows: list[dict]) -> None:
         "seed",
         "total_steps",
         "action_sensitivity",
-        "sigma_ratio_ood",
         "sigma_cv",
         "d_cv",
         "corr_sigma_d",
