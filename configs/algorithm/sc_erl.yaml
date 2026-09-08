@@ -45,7 +45,10 @@ surrogate:
   epsilon: 0.2
   mad_k: 2.483
   beta_lr: 1e-3
-  gate_mode: topk
+  gate_mode: h_bootstrap   # topk | relative | h_bootstrap
+  h_chunk: 25              # rollout slice, also the minimum H per individual
+  h_alloc: adaptive        # adaptive | uniform
+  p_stop: 0.05
   rho: 0.10
   rho_min: 0.1
   rho_max: 0.15

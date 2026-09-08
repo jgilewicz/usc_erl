@@ -383,22 +383,49 @@ def auc_score(scores: np.ndarray, labels: np.ndarray) -> float:
     return float((r[labels == 1].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
 
 
+def build_h_bootstrap_metrics(
+    surrogate_controller: "SurrogateController",
+) -> dict[str, float]:
+    horizons = np.array(surrogate_controller.last_h, dtype=np.float64)
+    if horizons.size == 0:
+        return {}
+    sigma_tail = surrogate_controller.last_sigma_tail
+    return {
+        "h_mean": float(horizons.mean()),
+        "h_median": float(np.median(horizons)),
+        "h_full_frac": surrogate_controller.last_n_full / horizons.size,
+        "sigma_tail_mean": float(np.mean(sigma_tail)) if sigma_tail else 0.0,
+        "tail_a": surrogate_controller.calibrator.a,
+        "tail_b": surrogate_controller.calibrator.b,
+        "cal_pairs": float(surrogate_controller.calibrator.n_pairs),
+        "budget_steps": float(surrogate_controller.last_budget),
+        "episode_len_ema": surrogate_controller.episode_length,
+        "beta": surrogate_controller.adaptive_beta.beta,
+        "f_cut": surrogate_controller.last_f_cut or 0.0,
+    }
+
+
 def build_surrogate_metrics(
     surrogate_controller: "SurrogateController", include_uncertainty: bool
 ) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    if surrogate_controller.gate_mode == "h_bootstrap":
+        metrics.update(build_h_bootstrap_metrics(surrogate_controller))
     if not include_uncertainty:
-        return {}
-    metrics: dict[str, float] = {
-        "uncertainty_mean": surrogate_controller.last_uncertainty_mean,
-        "uncertainty_max": surrogate_controller.last_uncertainty_max,
-        "uncertainty_threshold": surrogate_controller.last_uncertainty_threshold,
-        "raw_sigma_mean": surrogate_controller.last_raw_sigma_mean,
-        "raw_sigma_max": surrogate_controller.last_raw_sigma_max,
-        "raw_sigma_cv": surrogate_controller.raw_sigma_cv,
-        "rho": surrogate_controller.rho,
-        "e_hat_mean": surrogate_controller.e_hat_mean,
-        "raw_mu_mean": surrogate_controller.last_mu_mean,
-    }
+        return metrics
+    metrics.update(
+        {
+            "uncertainty_mean": surrogate_controller.last_uncertainty_mean,
+            "uncertainty_max": surrogate_controller.last_uncertainty_max,
+            "uncertainty_threshold": surrogate_controller.last_uncertainty_threshold,
+            "raw_sigma_mean": surrogate_controller.last_raw_sigma_mean,
+            "raw_sigma_max": surrogate_controller.last_raw_sigma_max,
+            "raw_sigma_cv": surrogate_controller.raw_sigma_cv,
+            "rho": surrogate_controller.rho,
+            "e_hat_mean": surrogate_controller.e_hat_mean,
+            "raw_mu_mean": surrogate_controller.last_mu_mean,
+        }
+    )
     if surrogate_controller.last_gate_quality is not None:
         metrics.update(
             {

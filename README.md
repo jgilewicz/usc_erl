@@ -152,12 +152,37 @@ task clean
 
 ## Surrogate Gating Logic
 
-SC-ERL evaluates whether each candidate policy needs a real rollout or can be scored cheaply via the critic surrogate. `surrogate.gate_mode` selects how the deterministic part of that decision is made:
+`surrogate.gate_mode` selects how much environment interaction each candidate policy gets:
 
-- `topk` (default) — real-evaluate the `surrogate.rho` fraction of the population with the highest predicted uncertainty `σ_Q(πᵢ)`, plus a random ε-coin flip (ε=0.10) on the rest so the surrogate error can still be measured on an unbiased sample. `rho` is adapted every `surrogate.e_hat_window` generations toward a target normalized surrogate error `surrogate.e_star`.
+- `h_bootstrap` (default) — uncertainty picks **how long** to evaluate a candidate, not **whether** to evaluate it. Every individual is rolled out for a per-individual number of steps `H`; the fitness is the partial return plus a calibrated critic tail (below). See [Fitness by H-bootstrap](#fitness-by-h-bootstrap).
+- `topk` (baseline) — real-evaluate the `surrogate.rho` fraction of the population with the highest predicted uncertainty `σ_Q(πᵢ)`, plus a random ε-coin flip (ε=0.10) on the rest so the surrogate error can still be measured on an unbiased sample. `rho` is adapted every `surrogate.e_hat_window` generations toward a target normalized surrogate error `surrogate.e_star`.
 - `relative` (ablation) — real-evaluate if `σ_Q(πᵢ)` exceeds a MAD-based threshold (`surrogate.mad_k`), **or** the ε-coin flip fires.
 
-Otherwise → surrogate fitness via Lower Confidence Bound: `f_LCB = μ_Q − β·σ_Q`, squashed via `surrogate.fitness_norm` (`tanh`, default, or `clip`).
+For `topk` / `relative`, a gated-out individual gets surrogate fitness via Lower Confidence Bound: `f_LCB = μ_Q − β·σ_Q`, squashed via `surrogate.fitness_norm` (`tanh`, default, or `clip`).
+
+### Fitness by H-bootstrap
+
+The binary gate measures `σ_Q` on **buffer states**, but the error it needs to predict is dominated by state-distribution mismatch — the critic does not know where a mutant will go, so `gate_auc_u` sits at 0.3–0.5. Rolling the candidate for `H` steps puts every state used in the estimate on the candidate's own trajectory, and leaves `σ` measuring exactly what remains: critic error at `s_H`.
+
+```
+alive = 1 if the episode did not end before H
+
+F̂ = Σ_{t<H} r_t  +  a·(T − H)(1 − γ)·Q̄(s_H, π(s_H))  +  b·alive     # return scale
+σ  = |a|·(T − H)(1 − γ)·std_i Q_i(s_H, π(s_H))·alive                  # return scale
+fitness = F̂ − β·σ                                                     # β adaptive, as before
+```
+
+`(a, b)` is a least-squares fit of `remaining return ≈ a·feature + b` on individuals rolled out in full (the ε-subset the gate already pays for), harvested at intermediate horizons along their trajectories. Without it the raw `(1 − γ)·Q` tail relies on the critic's absolute scale, which is off by up to an order of magnitude, and the ranking collapses onto `Q(s_H)`. `H = end of episode` gives `σ = 0` and `F̂` = the real return, so a full evaluation is a special case rather than a separate branch.
+
+`H` is chosen per individual by a stopping rule: after each `surrogate.h_chunk` slice, roll on while the elite/non-elite decision is still in doubt —
+
+```
+p = Φ( −|F̂ − F_cut| / σ )        stop when p < surrogate.p_stop
+```
+
+`F_cut` is the elite threshold (previous generation's, replaced by the current one's quantile once half the population is evaluated). The per-generation budget is `ρ · N · L_ema` (`L_ema` = EMA of observed full-episode length) — the same environment-step cost the binary gate pays at the same `ρ`, and an upper bound rather than a target: each individual is capped at an equal share of what is left, so steps given back by early stops accumulate for the individuals near the threshold instead of being spent for their own sake. `surrogate.h_alloc=uniform` spends the same budget evenly (`H = B/N`) instead — the built-in "uncertainty or just budget?" ablation, and what `surrogate.mode=random` falls back to since it has no `σ`.
+
+Design, offline simulation results, and the differences between the online implementation and that simulation: `H_bootstrap.md`.
 
 ### Uncertainty methods
 
@@ -168,7 +193,7 @@ Otherwise → surrogate fitness via Lower Confidence Bound: `f_LCB = μ_Q − β
 | `evidential` | Single forward pass; analytic NIG epistemic variance `β/(v(α−1))` |
 | `random` | Probabilistic coin-flip baseline (no uncertainty estimation) |
 
-### Known limitation: ensemble disagreement is not a validated epistemic signal
+### Known limitation: the ensemble rank inversion has no mechanistic explanation yet
 
 `surrogate.mode=ensemble` **inverts rank** across task classes — it beats `random` on DMC dog locomotion (Nemenyi rank 3.40 vs 5.60) but loses to it on classic MuJoCo (5.40 vs 4.00). We pre-registered two candidate explanations and tested both on a matched budget (`dog-walk` vs `Swimmer-v5`, 3 seeds, 500k steps, checkpointed at 20/60/100% of training) before looking at results — both were **refuted, not marginally**:
 
@@ -177,12 +202,34 @@ Otherwise → surrogate fitness via Lower Confidence Bound: `f_LCB = μ_Q − β
 | action-sensitivity ratio (dog / Swimmer) | > 3× | < 2× | 0.85× |
 | `sigma_cv` (dog vs Swimmer) | dog > 5%, Swimmer < 2% | comparable | 2.00% vs 2.18% |
 
-Two further observations from the same runs, independent of the gate itself:
-
-- **`sigma_ratio_ood < 1` in every environment, every seed, every training phase.** The ensemble assigns *lower* disagreement to out-of-distribution actions (uniform random) than to the actor's own actions — the opposite of what an epistemic estimator should do. This isn't a property of one environment or one gate config; it looks like a property of critic-disagreement-on-(s,a) as an uncertainty signal in general, relevant to any disagreement-based method in RL, not just this gate.
-- **`gate_auc_d`** (behavioral-distance-augmented gate score, swept over `λ ∈ {0, 0.25, 0.5, 1, 2}`) never beat plain uncertainty-based gating on AUC — distance carries no signal the ensemble doesn't already have. Removed from the codebase (`_gate_score`, `surrogate.lam`); the analysis script (`scripts/analyze_ensemble_checkpoints.py`) still reports `corr_sigma_d` if this needs revisiting.
+One further observation from the same runs, independent of the gate itself: **`gate_auc_d`** (behavioral-distance-augmented gate score, swept over `λ ∈ {0, 0.25, 0.5, 1, 2}`) never beat plain uncertainty-based gating on AUC — distance carries no signal the ensemble doesn't already have. Removed from the codebase (`_gate_score`, `surrogate.lam`); the analysis script (`scripts/analyze_ensemble_checkpoints.py`) still reports `corr_sigma_d` if this needs revisiting.
 
 Reproduction script and pre-registered pass/fail criteria: `scripts/analyze_ensemble_checkpoints.py`. Up to three attempts at a mechanistic explanation were budgeted; the first was unambiguous enough (not a marginal miss on either criterion) that the remaining two weren't spent. The mechanism is treated as an open problem for now — the paper reports the ranking gap without a causal explanation.
+
+The `h_bootstrap` gate mode is the response to the diagnosis behind this limitation: if `σ` on buffer states cannot predict which mutant needs a rollout, stop asking it that question and let it set the rollout length instead. It does not explain the ensemble inversion; it removes the binary decision the inversion was measured on.
+
+### Retracted: "uniform-action disagreement is lower than actor-action disagreement" is not evidence against the ensemble
+
+An earlier version of this section reported `sigma_ratio_ood < 1` — lower ensemble disagreement at uniform random actions than at the TD3 actor's actions — and read it as the ensemble failing to be epistemic. The measurement was real, the reading was wrong: neither probe point is an out-of-distribution reference for the critic, so the ratio says nothing about epistemic validity in either direction. `scripts/probe_ensemble_uncertainty.py` replaces it with probes whose relation to the training data is known. Disagreement relative to the buffer's own `(s, a)` pairs, seed 0, 100k-step runs:
+
+| probe | Swimmer 20k | Swimmer 60k | Swimmer 100k | Hopper 60k | Hopper 100k |
+|---|---|---|---|---|---|
+| buffer `(s, a_buf)` | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| uniform action | 1.12 | 1.09 | 1.08 | 1.15 | 0.93 |
+| actor action | 1.40 | 1.32 | 1.30 | 0.90 | 0.69 |
+| action ×2 (out of bounds) | 1.29 | 1.19 | 1.16 | 1.08 | 0.96 |
+| action ×3 (out of bounds) | 1.56 | 1.32 | 1.32 | 1.15 | 1.07 |
+| state ×2 | 2.04 | 1.52 | 2.44 | 1.27 | 1.26 |
+| state ×5 | 3.48 | 2.11 | 3.93 | 1.73 | 1.72 |
+| actor action after gradient *descent* on μ_Q | 1.09 | 1.06 | 1.06 | 0.90 | 1.39 |
+| old `sigma_ratio_ood` (uniform / actor) | 0.80 | 0.83 | 0.83 | 1.27 | 1.36 |
+
+- **The ensemble is a working deep ensemble.** Disagreement grows monotonically with distance from the data on inputs that are genuinely OOD — scaled states in every checkpoint, out-of-bound actions on Swimmer — and the implementation shows the same monotone ordering on a synthetic supervised regression (train points < uniform < argmax of the mean < out-of-bounds < scaled states).
+- **Uniform actions are not OOD for this critic.** Warmup writes uniform actions into the buffer (25k on Hopper, 100k on dog-walk; a 1M buffer never evicts them within 500k steps), GA mutants and exploration noise widen the action marginal further, and `|a| ≈ 0.5` is *closer* to the buffer's action marginal than the actor's saturated `|a| ≈ 0.9–0.96`.
+- **The actor's action is not an in-distribution reference either.** It is the argmax of the ensemble mean — an adversarially chosen point where disagreement is inflated, an effect that reproduces in pure supervised regression with no RL — and simultaneously the point where TD-target supervision and near-actor rollouts concentrate, which deflates it. Which effect wins depends on environment and phase: on Swimmer the actor sits at out-of-bounds-level disagreement and gradient descent on μ_Q returns it to the uniform level; on Hopper it sits below the buffer floor and descent *raises* it. The old ratio flips sign accordingly.
+- **Caveat for absolute thresholds:** `LayerNorm` in the critic bounds extrapolation, so the OOD signal is compressed relative to a norm-free critic (on the synthetic task, ×5 states raise disagreement to about 3× the training floor with `LayerNorm` versus about 30× without it). The rank-based `topk` gate is unaffected; the MAD-threshold `relative` gate is not.
+
+The validity test that matters for the gate is whether disagreement at *population* actions predicts surrogate error. That is logged live as `gate_auc_u` / `gate_spearman` (`SurrogateController._update_gate_quality`) and should be reported per environment instead of any single-point probe.
 
 ---
 
@@ -196,7 +243,10 @@ Key parameters in `configs/algorithm/sc_erl.yaml`:
 | `surrogate.mode` | Uncertainty method: `dropout`, `ensemble`, `evidential`, `random` |
 | `surrogate.beta` | LCB penalty weight (higher → more real rollouts) |
 | `surrogate.omega` | Real-vs-surrogate coin-flip threshold, `random` mode only |
-| `surrogate.gate_mode` | Gating strategy: `topk` (rank-based, default) or `relative` (MAD-threshold ablation) |
+| `surrogate.gate_mode` | Evaluation strategy: `h_bootstrap` (default), `topk` (rank-based binary gate), `relative` (MAD-threshold ablation) |
+| `surrogate.h_chunk` | Rollout slice Δ between stopping decisions; also the minimum `H` per individual |
+| `surrogate.h_alloc` | Budget allocation: `adaptive` (uncertainty-driven stopping) or `uniform` (equal `H`) |
+| `surrogate.p_stop` | Stop once `P(wrong side of the elite cut) < p_stop` |
 | `surrogate.rho` / `rho_min` / `rho_max` / `rho_eta` | `topk` real-eval budget fraction and its adaptation bounds/rate |
 | `surrogate.e_star` / `e_hat_window` | Target normalized surrogate error and the generation window `rho` is adapted over |
 | `surrogate.fitness_norm` | Surrogate fitness squashing: `tanh` (default) or `clip` |

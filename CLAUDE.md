@@ -25,7 +25,8 @@ Environments:
 | `entry_point.py` | Hydra launcher; routes config → algorithm constructor |
 | `src/algorithms/SC_ERL/sc_erl.py` | Main SC-ERL training loop |
 | `src/algorithms/ERL/erl.py` | Canonical ERL baseline |
-| `src/common/surrogate_controller.py` | Uncertainty gating, LCB scoring, EMA normalization |
+| `src/common/surrogate_controller.py` | Uncertainty gating, LCB scoring, EMA normalization, H-bootstrap evaluation |
+| `src/common/h_bootstrap.py` | `EpisodeRunner` (chunked rollout), `TailCalibrator` (affine tail fit), `stop_probability` |
 | `src/modules/evolution_module.py` | Elite preservation, tournament selection, sparse mutation |
 | `src/modules/deep_modules.py` | Actor, Critic, EvidentialCritic (NIG) |
 | `src/modules/ensemble_module.py` | Multi-critic ensemble with prediction std |
@@ -91,12 +92,41 @@ After mutation, weights are clamped to `[-1e6, 1e6]`.
 
 ---
 
-## Surrogate Gating (LCB)
+## H-bootstrap (default: `surrogate.gate_mode=h_bootstrap`)
+
+Uncertainty picks the rollout **length** per individual instead of a binary
+real/surrogate decision. `SurrogateController._h_bootstrap_evaluation` +
+`src/common/h_bootstrap.py`.
+
+```
+F̂ = Σ_{t<H} r_t + a·(T − H)(1 − γ)·Q̄(s_H, π(s_H)) + b·alive
+σ  = |a|·(T − H)(1 − γ)·std_i Q_i(s_H, π(s_H))·alive
+fitness = F̂ − β·σ            stop when Φ(−|F̂ − F_cut| / σ) < p_stop
+```
+
+- `(a, b)`: least squares on `(feature, remaining return)` pairs harvested at
+  `h_chunk`-spaced horizons from ε-individuals rolled out in full. Never skip
+  the calibration — the raw `(1 − γ)·Q` tail rides on the critic's absolute
+  scale, which is off by ~10×, and the ranking degenerates to `Q(s_H)`.
+- Uncalibrated (fewer than 30 pairs): `a = b = 0`, so fitness is the partial
+  return and `σ = 0`. Half the budget goes to full rollouts until it fits.
+- Budget per generation: `ρ · N · L_ema`; `Δ = clip((B − n_ε·L_ema)/N, 1, h_chunk)`.
+  `ρ` and its `e_star`/`e_hat_window` adaptation keep their existing meaning,
+  with `ê = |F̂(h) − R|` measured on ε-individuals.
+- `T` from `env.spec.max_episode_steps`; DMC via shimmy reports `None`, so it
+  grows to the longest observed episode instead.
+- `surrogate.mode=random` has no σ → forced to `h_alloc=uniform`. That, plus
+  `h_alloc=uniform` on the uncertainty modes, is the "uncertainty or budget?"
+  ablation at identical cost.
+- Only one `EpisodeRunner` may be live per env — it steps the env in place, so
+  a second one resets the episode the first is holding.
+
+## Surrogate Gating (LCB) — baseline gate modes
 
 `f_LCB(πᵢ) = μ_Q(πᵢ) − β · σ_Q(πᵢ)`
 
 Gating decision is controlled by `surrogate.gate_mode`:
-- `topk` (default) — real-evaluate the `rho` fraction of the population with the highest predicted uncertainty (`SurrogateController._gate_mask`), plus a random ε-coin-flip (ε=0.10) on the rest for unbiased exploration. `rho` adapts via `_update_rho` toward a target normalized surrogate error `e_star`, using `e_hat` pooled over `e_hat_window` generations (`_surrogate_error`, computed only from the ε-selected individuals, since they're the only unbiased sample of surrogate-vs-real error).
+- `topk` — real-evaluate the `rho` fraction of the population with the highest predicted uncertainty (`SurrogateController._gate_mask`), plus a random ε-coin-flip (ε=0.10) on the rest for unbiased exploration. `rho` adapts via `_update_rho` toward a target normalized surrogate error `e_star`, using `e_hat` pooled over `e_hat_window` generations (`_surrogate_error`, computed only from the ε-selected individuals, since they're the only unbiased sample of surrogate-vs-real error).
 - `relative` — the original per-individual gate: if `σ_Q > percentile_threshold(mad_k)` OR the ε-coin-flip fires → real rollout, otherwise accept the surrogate fitness. Kept as an ablation baseline against `topk`.
 
 Q-values are normalized via EMA running bounds before LCB (EMA factor α=0.05), then squashed to `[-1, 1]` via `surrogate.fitness_norm`: `tanh` (default, squeezes both tails toward the center) or `clip` (hard clip, no compression).
@@ -183,6 +213,8 @@ UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite
 - **fancy_gym backend**: `make_env()` in `entry_point.py` auto-detects DMC/fancy envs by `dm_control/`, `fancy/`, or `metaworld/` prefix and imports `fancy_gym` lazily. Set `env.backend=fancy_gym` explicitly to force it. Dog env-specific configs already set this.
 - **myosuite backend**: `make_env()` auto-detects MyoSuite envs by the `myo` prefix (all MyoSuite env IDs start with it) and lazily imports `myosuite` to register them. Set `env.backend=myosuite` explicitly to force it. Requires running from `.venv-myosuite` (`task run-myo`, or `UV_PROJECT_ENVIRONMENT=.venv-myosuite uv run ...`) — see [Dependency Extras](#dependency-extras-mujoco-envs-vs-myosuite).
 - **SLURM MyoSuite jobs**: `slurm_run_array.sh` detects the `myo` prefix, sets `BACKEND=myosuite`, and activates `.venv-myosuite` instead of `.venv` — build it once per checkout with `UV_PROJECT_ENVIRONMENT=.venv-myosuite uv sync --extra myosuite` before submitting.
+- **Ensemble checkpoints**: `surrogate.mode=ensemble` runs dump `checkpoints/ckpt_<env>_seed<seed>_<step>.pt` at 20/60/100% of `n_steps` — ensemble and `critic_2` state, RL actor, full population, and a 5000-sample `(obs_batch, act_batch)` buffer slice. `scripts/analyze_ensemble_checkpoints.py` runs the pre-registered rank-inversion mechanism test; `scripts/probe_ensemble_uncertainty.py` checks where disagreement sits relative to the buffer. Never use "σ at uniform actions vs σ at the actor's actions" as an OOD test — neither point is an OOD reference (see README).
+- **H-bootstrap**: `H_bootstrap.md` holds the design, the offline results, and section 6 on how the online implementation differs from the simulation (online stopping instead of interleaved racing, since one `gym.Env` cannot resume an episode). `scripts/simulate_h_bootstrap.py` simulates strategies from ensemble checkpoints (trajectories cached in `outputs/h_bootstrap_cache/`); `--verify <ckpt>` cross-checks the production `TailCalibrator` against the offline reference.
 - **DMC config naming**: env-specific configs for DMC follow the sanitized slug convention — `dm_control/dog-stand-v0` → `sc_erl_dm_control_dog-stand-v0.yaml`. MyoSuite env configs follow the same pattern (e.g. `sc_erl_myoHandReachRandom-v0.yaml`), currently added only under `configs/algorithm/sc_erl/` (matching the existing DMC precedent) and setting only `env.id`/`env.backend` — no tuned surrogate/evolution hyperparameters exist yet for these envs.
 - **SLURM**: single `slurm_run_array.sh` handles all three backends. Backend, venv dir, and algo matrix auto-detected from `TARGET_ENV` prefix (`dm_control/`/`fancy/`/`metaworld/` → fancy_gym + 4 SC-ERL modes, 20 tasks, `.venv`; `myo` → myosuite + 10 algos, 50 tasks, `.venv-myosuite`; otherwise → MuJoCo + 10 algos, 50 tasks, `.venv`). Pass `--array=0-19` for DMC, `--array=0-49` for MuJoCo/MyoSuite.
 - **SAC** wraps SB3 `SAC` (PyTorch). Shares `cfg.device` normally. No extra setup.

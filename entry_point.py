@@ -229,6 +229,9 @@ def main(cfg: DictConfig) -> None:
             e_star=cfg.surrogate.e_star,
             e_hat_window=cfg.surrogate.e_hat_window,
             fitness_norm=cfg.surrogate.fitness_norm,
+            h_chunk=cfg.surrogate.h_chunk,
+            h_alloc=cfg.surrogate.h_alloc,
+            p_stop=cfg.surrogate.p_stop,
             env_id=cfg.env.id,
             seed=cfg.seed,
         )

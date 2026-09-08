@@ -77,6 +77,9 @@ def SC_ERL(
     e_star: float = 0.25,
     e_hat_window: int = 10,
     fitness_norm: str = "tanh",
+    h_chunk: int = 25,
+    h_alloc: str = "adaptive",
+    p_stop: float = 0.05,
     env_id: str = "",
     seed: int = 0,
 ) -> float:
@@ -223,6 +226,11 @@ def SC_ERL(
         e_star=e_star,
         e_hat_window=e_hat_window,
         fitness_norm=fitness_norm,
+        gamma=gamma,
+        horizon=env.spec.max_episode_steps if env.spec is not None else None,
+        h_chunk=h_chunk,
+        h_alloc=h_alloc,
+        p_stop=p_stop,
     )
 
     total_steps = warmup(env, replay_buffer, warmup_steps=warmup_steps)
@@ -347,15 +355,15 @@ def SC_ERL(
             checkpoint_dir = Path("checkpoints")
             checkpoint_dir.mkdir(exist_ok=True)
             step_label = checkpoint_steps[next_checkpoint_idx]
-            obs_batch = replay_buffer.sample(batch_size=min(5000, len(replay_buffer)))[
-                "state"
-            ]
+            ckpt_batch = replay_buffer.sample(batch_size=min(5000, len(replay_buffer)))
             torch.save(
                 {
                     "actor": actor.state_dict(),
                     "critic": critic.state_dict(),
+                    "critic_2": critic_2.state_dict(),
                     "population": [p.state_dict() for p in population],
-                    "obs_batch": obs_batch.cpu().numpy(),
+                    "obs_batch": ckpt_batch["state"].cpu().numpy(),
+                    "act_batch": ckpt_batch["action"].cpu().numpy(),
                     "state_dim": state_dim,
                     "action_dim": action_dim,
                     "action_limit": action_limit,

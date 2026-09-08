@@ -135,6 +135,17 @@ def load_environment_data(env_id, base_dir="."):
         "gate_n_pool",
         "behavioral_distance_mean",
         "d_cv",
+        "h_mean",
+        "h_median",
+        "h_full_frac",
+        "sigma_tail_mean",
+        "tail_a",
+        "tail_b",
+        "cal_pairs",
+        "budget_steps",
+        "episode_len_ema",
+        "f_cut",
+        "beta",
     ]
     run_data = {}
 

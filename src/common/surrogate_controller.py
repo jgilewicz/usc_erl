@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from scipy.stats.mstats import spearmanr
 
+from common.h_bootstrap import EpisodeRunner, TailCalibrator, stop_probability
 from common.reply_buffer import Buffer
 from common.utils import (
     auc_score,
@@ -78,9 +79,16 @@ class SurrogateController:
         e_star: float = 0.25,
         e_hat_window: int = 10,
         fitness_norm: str = "clip",
+        gamma: float = 0.99,
+        horizon: int | None = None,
+        h_chunk: int = 25,
+        h_alloc: str = "adaptive",
+        p_stop: float = 0.05,
     ):
-        if gate_mode not in ("topk", "relative"):
+        if gate_mode not in ("topk", "relative", "h_bootstrap"):
             raise ValueError(f"unknown gate_mode: {gate_mode!r}")
+        if h_alloc not in ("adaptive", "uniform"):
+            raise ValueError(f"unknown h_alloc: {h_alloc!r}")
         if fitness_norm not in ("tanh", "clip"):
             raise ValueError(f"unknown fitness_norm: {fitness_norm!r}")
         if k < 1000:
@@ -110,6 +118,17 @@ class SurrogateController:
         self._e_hat_generation_count = 0
 
         self.fitness_norm = fitness_norm
+
+        self.h_chunk = h_chunk
+        self.h_alloc = h_alloc
+        self.p_stop = p_stop
+        self.calibrator = TailCalibrator(gamma=gamma, horizon=horizon)
+        self._episode_len_ema: float | None = None
+        self.last_f_cut: float | None = None
+        self.last_h: list[int] = []
+        self.last_sigma_tail: list[float] = []
+        self.last_budget: int = 0
+        self.last_n_full: int = 0
 
         self.adaptive_beta = AdaptiveBeta(init_value=beta).to(device)
         self._beta_optimizer = torch.optim.Adam(
@@ -192,7 +211,12 @@ class SurrogateController:
         self._generation += 1
 
         if total_steps < warmup_steps:
-            fitnesses, steps = self._real_evaluation(population, env, evaluate_episodes)
+            if self.gate_mode == "h_bootstrap":
+                fitnesses, steps = self._h_warmup_evaluation(population, env)
+            else:
+                fitnesses, steps = self._real_evaluation(
+                    population, env, evaluate_episodes
+                )
             self.last_fitness = fitnesses
             self.last_real_fitness = list(fitnesses)
             self.mode = "real"
@@ -226,7 +250,18 @@ class SurrogateController:
 
         surrogate_count = 0
 
-        if self.surrogate_mode == SurrogateMode.RANDOM:
+        if self.gate_mode == "h_bootstrap":
+            fitnesses, steps, surrogate_count = self._h_bootstrap_evaluation(
+                population=population,
+                env=env,
+                surrogate_critic=surrogate_critic,
+                elite_ratio=elite_ratio,
+                actor=actor,
+                action_limit=action_limit,
+            )
+            self.last_fitness = fitnesses
+
+        elif self.surrogate_mode == SurrogateMode.RANDOM:
             scaled_fitnesses = surrogate_fitness(
                 population, surrogate_critic, self.replay_buffer, self.device, self.k
             )
@@ -307,13 +342,8 @@ class SurrogateController:
         obs: torch.Tensor,
     ) -> tuple[list[float], list[float], list[np.ndarray], list[np.ndarray]]:
         if self.surrogate_mode == SurrogateMode.DROPOUT:
-            if not isinstance(critic, Critic):
-                raise TypeError(
-                    f"surrogate.mode=dropout requires a plain Critic, got "
-                    f"{type(critic).__name__}"
-                )
             return MCDropout.fitness_evaluation_mc_dropout(
-                critic=critic,
+                critic=self._as_dropout_critic(critic),
                 population=population,
                 obs=obs,
                 device=self.device,
@@ -323,27 +353,61 @@ class SurrogateController:
 
         mu_out, sigma_out, mu_per_state, sigma_per_state = [], [], [], []
 
-        critic.eval()
         for policy in population:
-            policy.eval()
-            with torch.no_grad():
-                actions = policy(obs)
-                if self.surrogate_mode == SurrogateMode.EVIDENTIAL:
-                    mu, v, alpha, beta = critic(obs, actions)
-                    var = beta / (v * (alpha - 1.0) + EPS_EVIDENTIAL)
-                    var = torch.nan_to_num(
-                        var, nan=0.0, posinf=POSINF_CLAMP, neginf=0.0
-                    )
-                    sigma = torch.sqrt(var.clamp(min=0.0))
-                else:
-                    mu, sigma = critic(obs, actions)
-
-            mu_out.append(mu.mean().item())
-            sigma_out.append(sigma.mean().item())
-            mu_per_state.append(mu.squeeze(-1).cpu().numpy())
-            sigma_per_state.append(sigma.squeeze(-1).cpu().numpy())
+            mu, sigma = self._q_stats(critic, policy, obs)
+            mu_out.append(float(mu.mean()))
+            sigma_out.append(float(sigma.mean()))
+            mu_per_state.append(mu)
+            sigma_per_state.append(sigma)
 
         return mu_out, sigma_out, mu_per_state, sigma_per_state
+
+    def _as_dropout_critic(
+        self, critic: Critic | EnsembleModule | EvidentialCritic
+    ) -> Critic:
+        if not isinstance(critic, Critic):
+            raise TypeError(
+                f"surrogate.mode=dropout requires a plain Critic, got "
+                f"{type(critic).__name__}"
+            )
+        return critic
+
+    def _q_stats(
+        self,
+        critic: Critic | EnsembleModule | EvidentialCritic,
+        policy: Actor,
+        obs: torch.Tensor,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self.surrogate_mode == SurrogateMode.DROPOUT:
+            _, _, mu_per_state, sigma_per_state = (
+                MCDropout.fitness_evaluation_mc_dropout(
+                    critic=self._as_dropout_critic(critic),
+                    population=[policy],
+                    obs=obs,
+                    device=self.device,
+                    T=self.mc_samples,
+                    dropout_p=self.dropout_p,
+                )
+            )
+            return mu_per_state[0], sigma_per_state[0]
+
+        critic.eval()
+        policy.eval()
+        with torch.no_grad():
+            actions = policy(obs)
+            if self.surrogate_mode == SurrogateMode.EVIDENTIAL:
+                mu, v, alpha, beta = critic(obs, actions)
+                var = beta / (v * (alpha - 1.0) + EPS_EVIDENTIAL)
+                var = torch.nan_to_num(var, nan=0.0, posinf=POSINF_CLAMP, neginf=0.0)
+                sigma = torch.sqrt(var.clamp(min=0.0))
+            elif self.surrogate_mode == SurrogateMode.RANDOM:
+                mu = critic(obs, actions)
+                mu = mu[0] if isinstance(mu, tuple) else mu
+                sigma = torch.zeros_like(mu)
+            else:
+                mu, sigma = critic(obs, actions)
+
+        return mu.squeeze(-1).cpu().numpy(), sigma.squeeze(-1).cpu().numpy()
 
     def _record_estimate(
         self,
@@ -444,6 +508,9 @@ class SurrogateController:
                 if self.last_behavioral_distance is not None:
                     self._eps_d.append(self.last_behavioral_distance[i])
 
+        self._recompute_gate_quality()
+
+    def _recompute_gate_quality(self) -> None:
         if len(self._eps_u) < EPS_POOL_MIN:
             self.last_gate_quality = None
             return
@@ -518,6 +585,305 @@ class SurrogateController:
         self._accumulate_rho_error()
         self._update_gate_quality(scaled, self.last_real_fitness)
         return fitnesses, steps, surrogate_count
+
+    def _h_budget(self, n_pop: int) -> int:
+        return int(self.rho * n_pop * self.episode_length)
+
+    @property
+    def episode_length(self) -> float:
+        return self._episode_len_ema or self.calibrator.horizon
+
+    def _h_eps_count(self, n_pop: int, budget: int) -> int:
+        if not self.calibrator.calibrated:
+            # no pairs to fit the tail on yet, so half the budget buys the full
+            # rollouts the affine fit needs
+            return int(np.clip(0.5 * budget / self.episode_length, 1, n_pop))
+        return int(np.clip(round(self.epsilon * self.rho * n_pop), 1, n_pop))
+
+    def _h_chunk_eff(self, n_pop: int, budget: int, eps_count: int) -> int:
+        free = budget - eps_count * self.episode_length
+        return int(np.clip(free // n_pop, 1, self.h_chunk))
+
+    def _h_order(
+        self, mu: list[float], sigma: list[float], elite_count: int
+    ) -> list[int]:
+        # cheap decisions first: individuals far from the elite threshold stop
+        # after one chunk, which leaves the budget — and a well estimated F_cut
+        # — for the ones sitting on the threshold
+        prior = np.array(self._lcb(mu, sigma))
+        cut = float(np.sort(prior)[-elite_count])
+        risk = [stop_probability(p, s, cut) for p, s in zip(prior, sigma)]
+        return [int(i) for i in np.argsort(risk)]
+
+    def _h_prior_order(
+        self,
+        population: list[Actor],
+        critic: Critic | EnsembleModule | EvidentialCritic,
+        *,
+        elite_count: int,
+        actor: Actor | None,
+        action_limit: float,
+    ) -> list[int]:
+        if self.surrogate_mode == SurrogateMode.RANDOM:
+            return [int(i) for i in self.rng.permutation(len(population))]
+
+        obs = self._sample_obs()
+        mu, sigma, mu_per_state, sigma_per_state = self._estimate(
+            critic, population, obs
+        )
+        self._record_estimate(sigma, mu_per_state, sigma_per_state, obs)
+        self.last_behavioral_distance = (
+            [
+                behavioural_distance(policy, actor, obs, action_limit)
+                for policy in population
+            ]
+            if actor is not None
+            else None
+        )
+        self._update_uncertainty_metrics(self._cv(mu, sigma))
+        return self._h_order(mu, sigma, elite_count)
+
+    def _h_estimate(
+        self,
+        critic: Critic | EnsembleModule | EvidentialCritic,
+        policy: Actor,
+        runner: EpisodeRunner,
+    ) -> tuple[float, float]:
+        obs = torch.as_tensor(
+            runner.last_obs, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
+        mu, sigma = self._q_stats(critic, policy, obs)
+        return self.calibrator.estimate(
+            partial_return=runner.cum_reward,
+            h=runner.steps,
+            q_mean=float(mu[0]),
+            q_std=float(sigma[0]),
+            alive=not runner.done,
+        )
+
+    def _roll_individual(
+        self,
+        policy: Actor,
+        env,
+        *,
+        critic: Critic | EnsembleModule | EvidentialCritic,
+        chunk: int,
+        h_cap: int | None,
+        f_cut: float | None,
+    ) -> tuple[float, float, EpisodeRunner]:
+        # h_cap None marks an epsilon individual: rolled to the end of the
+        # episode whatever the stop rule says, because only a complete return
+        # can calibrate the tail and measure the surrogate error
+        is_epsilon = h_cap is None
+        runner = EpisodeRunner(
+            policy,
+            env,
+            self.device,
+            self.replay_buffer,
+            store_states=is_epsilon,
+        )
+        if is_epsilon:
+            runner.advance()
+            return runner.cum_reward, 0.0, runner
+
+        f_hat, sigma = 0.0, 0.0
+        while not runner.done and runner.steps < h_cap:
+            runner.advance(min(chunk, h_cap - runner.steps))
+            f_hat, sigma = self._h_estimate(critic, policy, runner)
+            if (
+                f_cut is not None
+                and stop_probability(f_hat, sigma, f_cut) < self.p_stop
+            ):
+                break
+        return f_hat, sigma, runner
+
+    def _harvest_full(
+        self,
+        policy: Actor,
+        runner: EpisodeRunner,
+        *,
+        critic: Critic | EnsembleModule | EvidentialCritic,
+        chunk: int,
+    ) -> tuple[list[float], list[float], list[float]]:
+        states = torch.as_tensor(
+            np.array(runner.states), dtype=torch.float32, device=self.device
+        )
+        mu, sigma = self._q_stats(critic, policy, states)
+        rewards = np.asarray(runner.rewards)
+        self.calibrator.add_trajectory(rewards, mu, chunk)
+
+        if not self.calibrator.calibrated:
+            return [], [], []
+
+        total = float(rewards.sum())
+        f_hats, sigmas, reals = [], [], []
+        for h in range(chunk, len(rewards), chunk):
+            f_hat, sig = self.calibrator.estimate(
+                partial_return=float(rewards[:h].sum()),
+                h=h,
+                q_mean=float(mu[h]),
+                q_std=float(sigma[h]),
+                alive=True,
+            )
+            self._eps_u.append(sig)
+            self._eps_e.append(abs(f_hat - total))
+            f_hats.append(f_hat)
+            sigmas.append(sig)
+            reals.append(total)
+        return f_hats, sigmas, reals
+
+    def _observe_full_episode(self, policy: Actor, runner: EpisodeRunner) -> None:
+        alpha = self._fitness_ema_alpha
+        if self._episode_len_ema is None:
+            self._episode_len_ema = float(runner.steps)
+        else:
+            self._episode_len_ema = (
+                alpha * runner.steps + (1 - alpha) * self._episode_len_ema
+            )
+        self.calibrator.observe_episode_length(runner.steps)
+        self._anchor(policy, runner.cum_reward)
+
+    def _h_warmup_evaluation(
+        self, population: list[Actor], env
+    ) -> tuple[list[float], int]:
+        critic = copy.deepcopy(self.critic)
+        critic.eval()
+
+        fitnesses, steps = [], 0
+        self.last_h, self.last_sigma_tail = [], [0.0] * len(population)
+        for policy in population:
+            runner = EpisodeRunner(
+                policy, env, self.device, self.replay_buffer, store_states=True
+            )
+            runner.advance()
+            fitnesses.append(runner.cum_reward)
+            steps += runner.steps
+            self.last_h.append(runner.steps)
+            self._observe_full_episode(policy, runner)
+            self._harvest_full(policy, runner, critic=critic, chunk=self.h_chunk)
+
+        self.calibrator.fit()
+        self._update_real_bounds(fitnesses)
+        self.last_n_full = len(population)
+        self.last_budget = steps
+        return fitnesses, steps
+
+    def _h_bootstrap_evaluation(
+        self,
+        population: list[Actor],
+        env,
+        *,
+        surrogate_critic: Critic | EnsembleModule | EvidentialCritic,
+        elite_ratio: float,
+        actor: Actor | None,
+        action_limit: float,
+    ) -> tuple[list[float], int, int]:
+        n_pop = len(population)
+        elite_count = max(2 if n_pop >= 2 else 1, int(n_pop * elite_ratio))
+        budget = self._h_budget(n_pop)
+        eps_count = self._h_eps_count(n_pop, budget)
+        chunk = self._h_chunk_eff(n_pop, budget, eps_count)
+        eps_idx = set(self.rng.choice(n_pop, size=eps_count, replace=False).tolist())
+        alloc = (
+            "uniform" if self.surrogate_mode == SurrogateMode.RANDOM else self.h_alloc
+        )
+        order = self._h_prior_order(
+            population,
+            surrogate_critic,
+            elite_count=elite_count,
+            actor=actor,
+            action_limit=action_limit,
+        )
+
+        fitnesses = [0.0] * n_pop
+        self.last_h = [0] * n_pop
+        self.last_sigma_tail = [0.0] * n_pop
+        self.last_real_fitness = [None] * n_pop
+        beta_mu, beta_sigma, beta_real = [], [], []
+        full_returns: list[float] = []
+        estimates: list[float] = []
+
+        # the epsilon individuals roll to the end whatever happens, so their cost
+        # is reserved up front and only the rest compete for what is left
+        budget_left = max(0, budget - int(eps_count * self.episode_length))
+        steps = 0
+        f_cut = self.last_f_cut
+        for position, index in enumerate(order):
+            h_cap = self._h_cap(
+                index in eps_idx,
+                # without a threshold there is nothing to race towards, so the
+                # first generation spreads the budget evenly instead of handing
+                # it to whoever comes first
+                alloc=alloc if f_cut is not None else "uniform",
+                chunk=chunk,
+                budget=budget,
+                budget_left=budget_left,
+                n_pop=n_pop,
+                remaining=len(order) - position - 1,
+            )
+            f_hat, sigma, runner = self._roll_individual(
+                population[index],
+                env,
+                critic=surrogate_critic,
+                chunk=chunk,
+                h_cap=h_cap,
+                f_cut=f_cut if alloc == "adaptive" else None,
+            )
+            steps += runner.steps
+            if h_cap is not None:
+                budget_left -= runner.steps
+            fitnesses[index] = f_hat - self.adaptive_beta.beta * sigma
+            self.last_h[index] = runner.steps
+            self.last_sigma_tail[index] = sigma
+
+            if runner.done:
+                self.last_real_fitness[index] = runner.cum_reward
+                full_returns.append(runner.cum_reward)
+                self._observe_full_episode(population[index], runner)
+            if runner.states and runner.done:
+                mus, sigmas, reals = self._harvest_full(
+                    population[index], runner, critic=surrogate_critic, chunk=chunk
+                )
+                beta_mu += mus
+                beta_sigma += sigmas
+                beta_real += reals
+
+            estimates.append(f_hat)
+            # the order front-loads individuals far from the threshold, so the
+            # online cut only replaces the previous generation's once enough of
+            # the population has been evaluated for the quantile to mean anything
+            if len(estimates) >= max(elite_count, n_pop // 2):
+                f_cut = float(np.quantile(estimates, 1.0 - elite_ratio))
+
+        self.last_f_cut = f_cut
+        self.last_budget = budget
+        self.last_n_full = len(full_returns)
+        self._update_real_bounds(full_returns)
+        self.calibrator.fit()
+        self._update_beta(beta_mu, beta_sigma, beta_real)
+        self._accumulate_rho_error()
+        self._recompute_gate_quality()
+        return fitnesses, steps, n_pop - len(full_returns)
+
+    def _h_cap(
+        self,
+        is_epsilon: bool,
+        *,
+        alloc: str,
+        chunk: int,
+        budget: int,
+        budget_left: int,
+        n_pop: int,
+        remaining: int,
+    ) -> int | None:
+        if is_epsilon:
+            return None
+        if alloc == "uniform":
+            return max(chunk, budget // n_pop)
+        # equal share of what is left, so steps the early (low-risk) individuals
+        # give back by stopping early accumulate for the ones near the threshold
+        # at the end of the order
+        return max(chunk, budget_left // (remaining + 1))
 
     def _evolve_and_anchor(
         self,
@@ -602,10 +968,7 @@ class SurrogateController:
                 store_in_buffer=store_in_buffer,
             )
 
-            # Store the best real actor regardless of the surrogate predictions
-            if fitness > self.best_real_fitness:
-                self.best_real_fitness = fitness
-                self.best_real_actor_state = copy.deepcopy(individual.state_dict())
+            self._anchor(individual, fitness)
 
             fitnesses.append(fitness)
             total_steps += steps
@@ -614,6 +977,12 @@ class SurrogateController:
             self._update_real_bounds(fitnesses)
 
         return fitnesses, total_steps
+
+    def _anchor(self, individual: Actor, fitness: float) -> None:
+        # Store the best real actor regardless of the surrogate predictions
+        if fitness > self.best_real_fitness:
+            self.best_real_fitness = fitness
+            self.best_real_actor_state = copy.deepcopy(individual.state_dict())
 
     def _update_uncertainty_metrics(self, cv_values: list[float]) -> float:
         if not cv_values:

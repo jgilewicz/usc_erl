@@ -28,7 +28,17 @@
 #   TARGET_ENV=myoLegWalk-v0             sbatch --array=0-49 slurm_run_array.sh
 #
 # Optional overrides:
-#   N_STEPS   Training steps per run (default: 1000000)
+#   N_STEPS        Training steps per run (default: 1000000)
+#   GATE_MODE      SC-ERL evaluation strategy: h_bootstrap | topk | relative
+#                  (default: whatever configs/algorithm/sc_erl.yaml sets).
+#                  Set it to run the binary-gate control arm at a matched budget:
+#                    TARGET_ENV=dm_control/dog-walk-v0 GATE_MODE=topk \
+#                      sbatch --array=0-19 slurm_run_array.sh
+#   WANDB_PROJECT  WandB project (default: configs/config.yaml)
+#   WANDB_MODE     online | offline (default: offline). Offline runs are synced
+#                  after training; online logs live and has nothing to sync.
+#   WANDB_API_KEY  Taken from the environment when already set, else the literal
+#                  below — export it before sbatch to keep the key out of git.
 
 #SBATCH -N 1                            # 1 node
 #SBATCH -c 4                            # 4 CPU cores
@@ -87,9 +97,12 @@ SEED="${SEEDS[$SEED_IDX]}"
 # Sanitize env id (dm_control/dog-stand-v0 → dm_control_dog-stand-v0)
 ENV_SLUG=$(echo "${ENV}" | tr '/' '_' | tr ':' '_')
 
+GATE_SUFFIX=""
+[[ -n "${GATE_MODE:-}" && "$ALGO" == "sc_erl" ]] && GATE_SUFFIX="_${GATE_MODE}"
+
 if [[ -n "$SURROGATE_MODE" ]]; then
-  RUN_NAME="${ALGO}_${SURROGATE_MODE}_${ENV_SLUG}_seed${SEED}"
-  WANDB_TAGS="[${ENV_TAG},${ALGO},${SURROGATE_MODE}]"
+  RUN_NAME="${ALGO}_${SURROGATE_MODE}${GATE_SUFFIX}_${ENV_SLUG}_seed${SEED}"
+  WANDB_TAGS="[${ENV_TAG},${ALGO},${SURROGATE_MODE}${GATE_SUFFIX}]"
 else
   RUN_NAME="${ALGO}_${ENV_SLUG}_seed${SEED}"
   WANDB_TAGS="[${ENV_TAG},${ALGO},baseline]"
@@ -116,11 +129,14 @@ else
   exit 1
 fi
 
-export WANDB_API_KEY="INSERT_YOUR_WANDB_API_KEY_HERE"
-export WANDB_MODE="offline"
-export WANDB_DIR="${PROJECT_DIR}/wandb_logs"
+export WANDB_API_KEY="${WANDB_API_KEY:-INSERT_YOUR_WANDB_API_KEY_HERE}"
+# per-job dir so concurrent array tasks never sync each other's runs
+export WANDB_DIR="${PROJECT_DIR}/wandb_logs/${RUN_NAME}"
 export LD_LIBRARY_PATH="${PROJECT_DIR}/${VENV_DIR}/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH:-}"
 mkdir -p logs "${WANDB_DIR}"
+
+export WANDB_MODE="${WANDB_MODE:-offline}"
+echo "WandB: mode=${WANDB_MODE}"
 
 # Build optional args as arrays to avoid empty-string pitfalls
 SURROGATE_ARGS=()
@@ -130,10 +146,18 @@ BACKEND_ARGS=()
 [[ "$BACKEND" == "fancy_gym" ]] && BACKEND_ARGS=("env.backend=fancy_gym" "eval_env.backend=fancy_gym")
 [[ "$BACKEND" == "myosuite" ]] && BACKEND_ARGS=("env.backend=myosuite" "eval_env.backend=myosuite")
 
+GATE_ARGS=()
+[[ -n "${GATE_MODE:-}" && "$ALGO" == "sc_erl" ]] && GATE_ARGS=("surrogate.gate_mode=${GATE_MODE}")
+
+PROJECT_ARGS=()
+[[ -n "${WANDB_PROJECT:-}" ]] && PROJECT_ARGS=("wandb.project=${WANDB_PROJECT}")
+
 python entry_point.py \
   algorithm="${ALGO}" \
   "${SURROGATE_ARGS[@]}" \
   "${BACKEND_ARGS[@]}" \
+  "${GATE_ARGS[@]}" \
+  "${PROJECT_ARGS[@]}" \
   seed="${SEED}" \
   env.id="${ENV}" \
   eval_env.id="${ENV}" \
@@ -146,10 +170,18 @@ python entry_point.py \
 EXIT_CODE=$?
 
 if [[ $EXIT_CODE -eq 0 ]]; then
-  echo "Training completed. Syncing WandB logs..."
-  for d in "${WANDB_DIR}/wandb/offline-run-"*; do
-    [[ -d "$d" ]] && wandb sync "$d"
-  done
+  shopt -s nullglob
+  OFFLINE_RUNS=("${WANDB_DIR}/wandb/offline-run-"*)
+  shopt -u nullglob
+
+  if [[ ${#OFFLINE_RUNS[@]} -gt 0 ]]; then
+    echo "Training completed. Syncing ${#OFFLINE_RUNS[@]} offline WandB run(s)..."
+    for d in "${OFFLINE_RUNS[@]}"; do
+      wandb sync "$d" || echo "WARNING: wandb sync failed for ${d}"
+    done
+  else
+    echo "Training completed. WandB logged live, nothing to sync."
+  fi
   echo "Job ${RUN_NAME} completed successfully."
 else
   echo "ERROR: Job ${RUN_NAME} failed with exit code: ${EXIT_CODE}"

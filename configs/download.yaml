@@ -1,6 +1,8 @@
 wandb:
   entity: evo_rl
-  project: ue_evo_rl_3
+  # one project per evaluation arm — switch this line to analyse the other one,
+  # and move plots_and_tests/<metric>/ aside first, the CSV paths collide
+  project: h_bootstrap_dmc      # h_bootstrap arm; topk arm: h_bootstrap_dmc_topk
 
 algorithms:
   - sc_erl_evidential
